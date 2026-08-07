@@ -70,6 +70,8 @@ def _audit_record(
         errors.append(f"{identifier}: run_id mismatch")
     if record.get("status") not in TERMINAL_STATUSES:
         errors.append(f"{identifier}: invalid status {record.get('status')}")
+    if not record.get("method_source"):
+        errors.append(f"{identifier}: method source is missing")
     if record.get("source_sha256") != source_hash:
         errors.append(f"{identifier}: source hash mismatch")
     expected_target = config.target(str(record.get("ratio")))
@@ -87,6 +89,11 @@ def _audit_record(
             == "not_evaluated"
         ):
             warnings.append(f"{identifier}: self-intersection not evaluated")
+    repository = record.get("environment", {}).get("repository", {})
+    if not repository.get("commit"):
+        errors.append(f"{identifier}: repository commit is missing")
+    if repository.get("dirty") is True:
+        warnings.append(f"{identifier}: repository was dirty at launch")
 
 
 def _audit_research(
@@ -97,6 +104,8 @@ def _audit_research(
 ) -> None:
     if record.get("track") != "research":
         errors.append(f"{identifier}: expected research track")
+    if not record.get("input_sha256"):
+        errors.append(f"{identifier}: research input hash is missing")
     output = record.get("output_path")
     if not output:
         if record.get("status") in {"SUCCESS", "TARGET_UNREACHABLE"}:
@@ -115,12 +124,17 @@ def _audit_research(
         if record.get("status") != expected_status:
             errors.append(f"{identifier}: target status is inconsistent with actual faces")
     timing = record.get("timing", {})
-    if (
-        record.get("method") != "cwf"
-        and record.get("status") in {"SUCCESS", "TARGET_UNREACHABLE"}
-        and (timing.get("warmup_runs") != 1 or timing.get("repetitions") != 3)
-    ):
-        errors.append(f"{identifier}: expected one warmup and three timed repetitions")
+    if record.get("status") in {"SUCCESS", "TARGET_UNREACHABLE"}:
+        if record.get("method") != "cwf":
+            if timing.get("warmup_runs") != 1 or timing.get("repetitions") != 3:
+                errors.append(f"{identifier}: expected one warmup and three timed repetitions")
+        else:
+            threshold = float(config.data["timing"]["slow_threshold_seconds"])
+            probe_wall = float(timing.get("classification_probe_wall_seconds", timing.get("algorithm_wall_seconds", 0)))
+            if probe_wall < threshold and (timing.get("warmup_runs") != 1 or timing.get("repetitions") != 3):
+                errors.append(f"{identifier}: sub-hour CWF run lacks one warmup and three repetitions")
+            if probe_wall >= threshold and timing.get("repetitions") != 1:
+                errors.append(f"{identifier}: hour-scale CWF run must have one measured repetition")
 
 
 def _audit_asset(
