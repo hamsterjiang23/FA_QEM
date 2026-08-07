@@ -1,0 +1,40 @@
+schema_version: 1
+dependencies:
+  qslim:
+    source_url: https://www.cs.cmu.edu/~garland/quadrics/qslim-1_0.zip
+    archive_sha256: e5de7f3aae50bb3cd449efb551afb28ad41e9b5c71badb0853c212fb6024966c
+    built_binary_sha256: da831cc071bec52308a8ddab6d371eaa45467e84dd656114ad27202671ee631b
+    license: public_domain
+    tracked_compatibility: native/qslim_compat
+  qem4vr:
+    paper_url: https://doi.org/10.1145/3209661
+    official_code: unavailable_as_of_2026-08-07
+    implementation: native/paper_simplify.cpp
+    evidence_note: docs/paper-implementation-spec.md
+  robustlpm:
+    source_url: https://robust-low-poly-meshing.github.io/exe/RoLoPM_EXE.zip
+    archive_sha256: cdc246ffcb2fd97ec1cf98d9426d7a6417122f12e6cc36596fdc84e8046ca8bc
+    executable_sha256: 2b3b510fa595b74405862590949899c8cb1157e1d6cc9012f6b923f0a906a102
+    license: research_executable_restricted_no_redistribution
+  ice:
+    source_url: https://github.com/HTDerekLiu/intrinsic-simplification.git
+    commit: 708bc7c77955f654d56292e4e7683d16caabfb5d
+    built_binary_sha256: ac3fa449a2fc82f612a04bd4671f2e592b41f5c856ffe2d030e3c0b16edc9a1d
+    adapter: native/ice_cli.cpp
+  stmw:
+    paper_url: https://arxiv.org/abs/2409.15458
+    paper_sha256: 1bc81e9cb3af8455ea6ebd29cc2a5da2c50291878577c376953de0fc1c010ddf
+    official_code: unavailable_as_of_2026-08-07
+    implementation: native/paper_simplify.cpp
+    evidence_note: docs/paper-implementation-spec.md
+  cwf:
+    source_url: https://github.com/Xrvitd/CWF.git
+    commit: 79c9f75737d372684e05aa1e815656ac962c7a98
+    built_binary_sha256: 856668ad5d4573cd2bd1e4e09455753b920cfd3c1c8994958c6464ed1783a633
+    license: AGPL-3.0_research_noncommercial_notice
+    tracked_compatibility_patch: patches/cwf-gcc-compat.patch
+  asset_pipeline_tools_v2:
+    local_source: E:/skills/asset_pipeline_tools_v2
+    environment: E:/skills/asset_pipeline_tools_v2/.venv
+    tool_version: 0.2.2
+    license: MIT

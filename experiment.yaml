@@ -1,0 +1,40 @@
+schema_version: 1
+source:
+  path: Test_Model/curved-lantern-balustrade-final.glb
+  sha256: 0be9c425a2c3cc2fe7ece2a6fe4c7fa8ef44879d94403e4cdb6f849bc6f891d2
+  expected_faces: 164940
+targets:
+  "0.5": 82470
+  "0.1": 16494
+  "0.01": 1649
+target_tolerance: 0.02
+methods:
+  - qem
+  - qem4vr
+  - robustlpm
+  - ice
+  - stmw
+  - cwf
+tracks:
+  - research
+  - asset
+random_seed: 260514029
+threads: 12
+evaluation:
+  geometry_samples: 100000
+  texture_samples: 10000
+repair:
+  policy: failed_native_only
+  tool_root: E:/skills/asset_pipeline_tools_v2
+  backend_order:
+    - light
+    - manifold
+    - cgal-local
+    - alpha-wrap
+    - openvdb
+    - blender-voxel
+timing:
+  warmup_runs: 1
+  repeats_under_seconds: 3
+  slow_threshold_seconds: 3600
+
