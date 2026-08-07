@@ -34,7 +34,7 @@ def doctor(config: ExperimentConfig) -> dict[str, Any]:
         "ok": sha256_file(config.source) == config.data["source"]["sha256"],
         "source": str(config.source),
         "source_sha256": sha256_file(config.source),
-        "environment": environment_snapshot(),
+        "environment": environment_snapshot(config.root),
         "commands": {
             name: shutil.which(name)
             for name in (

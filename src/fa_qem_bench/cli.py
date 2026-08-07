@@ -6,13 +6,14 @@ from pathlib import Path
 
 from .config import SUPPORTED_METHODS, load_config
 from .doctor import doctor
-from .evaluate import evaluate_paths, external_mesh_inspection
+from .evaluate import evaluate_run
 from .mesh import prepare_source
 from .repair import repair_run
 from .report import build_report
-from .runner import load_run_record, run_baseline
+from .resources import recover_wsl_resources
+from .runner import run_baseline
+from .sweep import run_sweep
 from .texture import rebake_run
-from .util import atomic_json
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -31,6 +32,14 @@ def _parser() -> argparse.ArgumentParser:
     rebake.add_argument("--resolution", type=int, default=2048)
     evaluate = subparsers.add_parser("evaluate")
     evaluate.add_argument("--run-id", required=True)
+    recover = subparsers.add_parser("recover-resources")
+    recover.add_argument("--run-id", required=True)
+    recover.add_argument("--monitor", required=True, type=Path)
+    sweep = subparsers.add_parser("sweep")
+    sweep.add_argument("--methods", nargs="+", choices=SUPPORTED_METHODS, default=list(SUPPORTED_METHODS))
+    sweep.add_argument("--ratios", nargs="+", choices=("0.5", "0.1", "0.01"), default=["0.5", "0.1", "0.01"])
+    sweep.add_argument("--resume", action=argparse.BooleanOptionalAction, default=True)
+    sweep.add_argument("--resolution", type=int, default=2048)
     subparsers.add_parser("report")
     return parser
 
@@ -63,30 +72,16 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result, indent=2))
         return 0
     if args.command == "evaluate":
-        run_path = config.artifacts / "runs" / args.run_id / "run.json"
-        record = load_run_record(run_path)
-        if not record.get("output_path"):
-            raise ValueError(f"run has no output: {args.run_id}")
-        manifest = json.loads((config.artifacts / "prepared" / "manifest.json").read_text(encoding="utf-8"))
-        is_asset = record.get("track") == "asset"
-        metrics = evaluate_paths(
-            config.source if is_asset else config.artifacts / "prepared" / "geometry_unit.obj",
-            config.root / record["output_path"],
-            int(config.data["evaluation"]["geometry_samples"]),
-            config.seed,
-            float(manifest["transform"]["diagonal"]),
-            input_is_normalized=not is_asset,
-            texture_count=(int(config.data["evaluation"]["texture_samples"]) if is_asset else None),
-        )
-        repair_root = Path(str(config.data["repair"]["tool_root"]))
-        metrics["external_inspection"] = external_mesh_inspection(
-            repair_root / ".venv" / "Scripts" / "asset-tools-v2.exe",
-            config.root / record["output_path"],
-            config.root,
-        )
-        record.setdefault("metrics", {}).update(metrics)
-        atomic_json(run_path, record)
+        metrics = evaluate_run(config, args.run_id)
         print(json.dumps(metrics, indent=2))
+        return 0
+    if args.command == "recover-resources":
+        metrics = recover_wsl_resources(config, args.run_id, args.monitor)
+        print(json.dumps(metrics, indent=2))
+        return 0
+    if args.command == "sweep":
+        result = run_sweep(config, args.methods, args.ratios, resume=args.resume, resolution=args.resolution)
+        print(json.dumps(result, indent=2))
         return 0
     if args.command == "report":
         print(build_report(config))

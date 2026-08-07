@@ -34,7 +34,34 @@ def command_version(command: list[str]) -> str | None:
     return output.splitlines()[0] if output else f"exit={result.returncode}"
 
 
-def environment_snapshot() -> dict[str, Any]:
+def _git_snapshot(root: Path | None) -> dict[str, Any]:
+    if root is None:
+        return {"commit": None, "dirty": None}
+    prefix = ["git", "-c", f"safe.directory={root.as_posix()}", "-C", str(root)]
+    try:
+        commit = subprocess.run(
+            [*prefix, "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+        status = subprocess.run(
+            [*prefix, "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return {"commit": None, "dirty": None}
+    return {
+        "commit": commit.stdout.strip() if commit.returncode == 0 else None,
+        "dirty": bool(status.stdout.strip()) if status.returncode == 0 else None,
+    }
+
+
+def environment_snapshot(root: Path | None = None) -> dict[str, Any]:
     return {
         "platform": platform.platform(),
         "python": sys.version,
@@ -43,4 +70,5 @@ def environment_snapshot() -> dict[str, Any]:
         "git": command_version(["git", "--version"]),
         "cmake": command_version(["cmake", "--version"]),
         "ninja": command_version(["ninja", "--version"]),
+        "repository": _git_snapshot(root.resolve() if root is not None else None),
     }

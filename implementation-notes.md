@@ -34,6 +34,9 @@
 - The repair tool's inspect command reports self-intersection as `not_evaluated` in the current environment because no backend is available. Evaluation records preserve that explicit status instead of treating it as zero intersections.
 - Sub-hour adapters now consume the experiment timing configuration, run one warmup followed by three measured repetitions, and report all samples plus median/range. RobustLPM and ICE keep target calibration time separate and rerun the selected parameter into distinct benchmark outputs; hour-scale CWF remains a single measured run.
 - On the fixed closed-octahedron fixture, official QSlim and the shared closed-manifold QEM core both produce a four-face watertight mesh. Against the same source, their 100,000-sample Hausdorff and Chamfer errors differ by 0.030% and 0.325%, respectively, within the declared 2% consistency tolerance.
+- Every new run now records the benchmark repository commit and dirty state in addition to tool versions, so an artifact can be tied to the exact harness source that produced it.
+- The resumable `sweep` command validates source/output hashes, writes stage progress atomically, creates an asset-track failure record when no research output exists, and refreshes evaluation after a 2048-pixel rebake.
+- The CWF compatibility monitor can be folded into a completed run with `recover-resources`; a late-started monitor explicitly marks peak RSS as a lower bound instead of presenting it as a complete-process maximum.
 
 ## Questions for review
 

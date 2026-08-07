@@ -39,7 +39,7 @@ def run_baseline(config: ExperimentConfig, method: str, ratio: str) -> RunRecord
         status=RunStatus.BUILD_FAILURE,
         source_sha256=sha256_file(config.source),
         input_sha256=sha256_file(prepared_path),
-        environment=environment_snapshot(),
+        environment=environment_snapshot(config.root),
         parameters={"availability": detail, "threads": int(config.data["threads"])},
     )
     if not available:

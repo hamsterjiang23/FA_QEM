@@ -32,13 +32,6 @@ def _asset_run_id(research_run_id: str) -> str:
 def repair_run(config: ExperimentConfig, research_run_id: str) -> dict[str, Any]:
     research_path = config.artifacts / "runs" / research_run_id / "run.json"
     research = load_run_record(research_path)
-    if not research.get("output_path"):
-        raise ValueError(f"research run has no output: {research_run_id}")
-    native = config.root / research["output_path"]
-    frozen_hash = sha256_file(native)
-    if frozen_hash != research.get("output_sha256"):
-        raise ValueError("native output changed after the research record was written")
-
     asset_id = _asset_run_id(research_run_id)
     asset_dir = config.artifacts / "runs" / asset_id
     asset_dir.mkdir(parents=True, exist_ok=True)
@@ -53,12 +46,30 @@ def repair_run(config: ExperimentConfig, research_run_id: str) -> dict[str, Any]
         actual_faces=research.get("actual_faces"),
         status=RunStatus.BUILD_FAILURE,
         source_sha256=research.get("source_sha256"),
-        input_sha256=frozen_hash,
-        environment=environment_snapshot(),
+        input_sha256=research.get("output_sha256"),
+        environment=environment_snapshot(config.root),
         metrics={"native_topology": research.get("metrics", {}).get("native_topology", {})},
         parameters={"research_run_id": research_run_id},
     )
     record_path = asset_dir / "run.json"
+
+    if not research.get("output_path"):
+        research_status = str(research.get("status", RunStatus.ALGORITHM_FAILURE))
+        record.status = (
+            research_status
+            if research_status in {RunStatus.BUILD_FAILURE, RunStatus.ALGORITHM_FAILURE}
+            else RunStatus.ALGORITHM_FAILURE
+        )
+        record.error = f"research output unavailable: {research_status}"
+        record.repair_lineage = {"action": "not_possible", "research_run_id": research_run_id}
+        record.write(record_path)
+        return {"run_id": asset_id, "action": "not_possible", "status": record.status}
+
+    native = config.root / research["output_path"]
+    frozen_hash = sha256_file(native)
+    if frozen_hash != research.get("output_sha256"):
+        raise ValueError("native output changed after the research record was written")
+    record.input_sha256 = frozen_hash
 
     if not _native_hard_failure(research):
         output = asset_dir / "geometry.obj"

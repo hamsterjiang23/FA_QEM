@@ -8,8 +8,11 @@ from typing import Any, cast
 import numpy as np
 import trimesh
 
+from .config import ExperimentConfig
 from .mesh import geometric_weld, load_mesh, mesh_topology
+from .runner import load_run_record
 from .texture import _sample_image
+from .util import atomic_json
 
 
 def external_mesh_inspection(executable: Path, mesh_path: Path, workspace: Path) -> dict[str, Any]:
@@ -199,4 +202,31 @@ def evaluate_paths(
             metrics["texture"] = texture_metrics(reference, result, texture_count, seed + 10)
         except ValueError as error:
             metrics["texture"] = {"status": "N/A", "reason": str(error)}
+    return metrics
+
+
+def evaluate_run(config: ExperimentConfig, run_id: str) -> dict[str, Any]:
+    run_path = config.artifacts / "runs" / run_id / "run.json"
+    record = load_run_record(run_path)
+    if not record.get("output_path"):
+        raise ValueError(f"run has no output: {run_id}")
+    manifest = json.loads((config.artifacts / "prepared" / "manifest.json").read_text(encoding="utf-8"))
+    is_asset = record.get("track") == "asset"
+    metrics = evaluate_paths(
+        config.source if is_asset else config.artifacts / "prepared" / "geometry_unit.obj",
+        config.root / record["output_path"],
+        int(config.data["evaluation"]["geometry_samples"]),
+        config.seed,
+        float(manifest["transform"]["diagonal"]),
+        input_is_normalized=not is_asset,
+        texture_count=(int(config.data["evaluation"]["texture_samples"]) if is_asset else None),
+    )
+    repair_root = Path(str(config.data["repair"]["tool_root"]))
+    metrics["external_inspection"] = external_mesh_inspection(
+        repair_root / ".venv" / "Scripts" / "asset-tools-v2.exe",
+        config.root / record["output_path"],
+        config.root,
+    )
+    record.setdefault("metrics", {}).update(metrics)
+    atomic_json(run_path, record)
     return metrics
