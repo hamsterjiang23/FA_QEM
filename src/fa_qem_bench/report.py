@@ -62,6 +62,7 @@ def build_report(config: ExperimentConfig) -> Path:
         "resource_measurement",
         "hausdorff_normalized",
         "chamfer_mse_normalized",
+        "texture_status",
         "texture_rgb_l2",
         "boundary_edges",
         "nonmanifold_edges",
@@ -98,6 +99,7 @@ def build_report(config: ExperimentConfig) -> Path:
                     "resource_measurement": timing.get("resource_measurement"),
                     "hausdorff_normalized": geometry.get("hausdorff_symmetric_sampled"),
                     "chamfer_mse_normalized": geometry.get("chamfer_mean_squared_symmetric"),
+                    "texture_status": texture.get("status"),
                     "texture_rgb_l2": texture.get("symmetric_mean_rgb_l2"),
                     "boundary_edges": topology.get("boundary_edges"),
                     "nonmanifold_edges": topology.get("nonmanifold_edges"),
@@ -128,6 +130,7 @@ def build_report(config: ExperimentConfig) -> Path:
         row["resource_measurement"] = timing.get("resource_measurement", "")
         row["hausdorff_normalized"] = geometry.get("hausdorff_symmetric_sampled", "")
         row["chamfer_mse_normalized"] = geometry.get("chamfer_mean_squared_symmetric", "")
+        row["texture_status"] = texture.get("status", "")
         row["texture_rgb_l2"] = texture.get("symmetric_mean_rgb_l2", "")
         for key in ("boundary_edges", "nonmanifold_edges", "degenerate_faces", "components", "watertight"):
             row[key] = topology.get(key, "")

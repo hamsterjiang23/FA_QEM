@@ -221,6 +221,11 @@ def evaluate_run(config: ExperimentConfig, run_id: str) -> dict[str, Any]:
         input_is_normalized=not is_asset,
         texture_count=(int(config.data["evaluation"]["texture_samples"]) if is_asset else None),
     )
+    if not is_asset:
+        metrics["texture"] = {
+            "status": "N/A",
+            "reason": "research-track native output is not evaluated with the common PBR rebake",
+        }
     repair_root = Path(str(config.data["repair"]["tool_root"]))
     metrics["external_inspection"] = external_mesh_inspection(
         repair_root / ".venv" / "Scripts" / "asset-tools-v2.exe",
