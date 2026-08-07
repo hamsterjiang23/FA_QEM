@@ -14,13 +14,16 @@ from .util import environment_snapshot, sha256_file
 
 def _native_hard_failure(record: dict[str, Any]) -> bool:
     topology = record.get("metrics", {}).get("native_topology", {})
-    return bool(
+    internal_failure = bool(
         topology.get("boundary_edges", 0)
         or topology.get("nonmanifold_edges", 0)
         or topology.get("degenerate_faces", 0)
         or not topology.get("finite_vertices", False)
         or not topology.get("winding_consistent", False)
     )
+    external_constraints = record.get("metrics", {}).get("external_inspection", {}).get("hard_constraints", {})
+    external_failure = external_constraints.get("passed") is False
+    return internal_failure or external_failure
 
 
 def _asset_run_id(research_run_id: str) -> str:

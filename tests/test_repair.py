@@ -2,7 +2,7 @@ from pathlib import Path
 
 from fa_qem_bench.config import ExperimentConfig
 from fa_qem_bench.records import RunRecord, RunStatus
-from fa_qem_bench.repair import repair_run
+from fa_qem_bench.repair import _native_hard_failure, repair_run
 from fa_qem_bench.runner import load_run_record
 from fa_qem_bench.util import sha256_file
 
@@ -37,3 +37,19 @@ def test_repair_materializes_asset_failure_when_research_has_no_output(tmp_path:
     assert asset["track"] == "asset"
     assert asset["repair_lineage"]["action"] == "not_possible"
     assert asset["error"] == "research output unavailable: ALGORITHM_FAILURE"
+
+
+def test_external_hard_gate_can_override_clean_internal_topology() -> None:
+    record = {
+        "metrics": {
+            "native_topology": {
+                "boundary_edges": 0,
+                "nonmanifold_edges": 0,
+                "degenerate_faces": 0,
+                "finite_vertices": True,
+                "winding_consistent": True,
+            },
+            "external_inspection": {"hard_constraints": {"passed": False, "failed": ["DEGENERATE"]}},
+        }
+    }
+    assert _native_hard_failure(record) is True
