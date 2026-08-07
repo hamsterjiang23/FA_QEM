@@ -4,6 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
+from .audit import audit_experiment
 from .config import SUPPORTED_METHODS, load_config
 from .doctor import doctor
 from .evaluate import evaluate_run
@@ -43,6 +44,8 @@ def _parser() -> argparse.ArgumentParser:
     sweep.add_argument("--ratios", nargs="+", choices=("0.5", "0.1", "0.01"), default=["0.5", "0.1", "0.01"])
     sweep.add_argument("--resume", action=argparse.BooleanOptionalAction, default=True)
     sweep.add_argument("--resolution", type=int, default=2048)
+    audit = subparsers.add_parser("audit")
+    audit.add_argument("--allow-incomplete", action="store_true")
     subparsers.add_parser("report")
     return parser
 
@@ -93,6 +96,11 @@ def main(argv: list[str] | None = None) -> int:
         result = run_sweep(config, args.methods, args.ratios, resume=args.resume, resolution=args.resolution)
         print(json.dumps(result, indent=2))
         return 0
+    if args.command == "audit":
+        result = audit_experiment(config)
+        print(json.dumps(result, indent=2))
+        complete_enough = not result["errors"] and (args.allow_incomplete or not result["missing"])
+        return 0 if complete_enough else 1
     if args.command == "report":
         print(build_report(config))
         return 0
