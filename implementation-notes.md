@@ -30,6 +30,8 @@
 - QEM4VR now welds exact duplicate positions while retaining per-corner UV/normal attributes, preventing texture seams from being treated as disconnected geometry. The research OBJ exports the transferred attributes; topology gates use a welded geometry view and preserve the attribute-split view separately.
 - The paper-correct QEM4VR 50% run reached exactly 82,470 faces in 7.56 seconds. Its welded geometry is one closed manifold component; the native OBJ also retains 247,410 per-corner attribute vertices, which are reported separately rather than misclassified as geometric cracks.
 - `trimesh.split` made component counting on fully split attribute views exceed the diagnostic timeout. Topology reporting now uses SciPy sparse connected components and computes both the attribute and `1e-6` welded geometry views in a few seconds.
+- Windows process-tree sampling cannot see Linux descendants behind `wsl.exe`. New WSL runs are wrapped in `/usr/bin/time -v` and label CPU/RSS provenance as `gnu_time_v_inside_wsl`; the already-running CWF 50% job has a separate 60-second `/proc` monitor because it predates this change.
+- The repair tool's inspect command reports self-intersection as `not_evaluated` in the current environment because no backend is available. Evaluation records preserve that explicit status instead of treating it as zero intersections.
 
 ## Questions for review
 

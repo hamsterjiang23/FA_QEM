@@ -6,7 +6,7 @@ from pathlib import Path
 
 from .config import SUPPORTED_METHODS, load_config
 from .doctor import doctor
-from .evaluate import evaluate_paths
+from .evaluate import evaluate_paths, external_mesh_inspection
 from .mesh import prepare_source
 from .repair import repair_run
 from .report import build_report
@@ -77,6 +77,12 @@ def main(argv: list[str] | None = None) -> int:
             float(manifest["transform"]["diagonal"]),
             input_is_normalized=not is_asset,
             texture_count=(int(config.data["evaluation"]["texture_samples"]) if is_asset else None),
+        )
+        repair_root = Path(str(config.data["repair"]["tool_root"]))
+        metrics["external_inspection"] = external_mesh_inspection(
+            repair_root / ".venv" / "Scripts" / "asset-tools-v2.exe",
+            config.root / record["output_path"],
+            config.root,
         )
         record.setdefault("metrics", {}).update(metrics)
         atomic_json(run_path, record)

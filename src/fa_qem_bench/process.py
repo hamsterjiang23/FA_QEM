@@ -17,6 +17,7 @@ class ProcessResult:
     peak_rss_bytes: int
     stdout_path: Path
     stderr_path: Path
+    resource_source: str
 
 
 def run_measured(command: list[str], cwd: Path, log_dir: Path, timeout: float | None = None) -> ProcessResult:
@@ -53,4 +54,47 @@ def run_measured(command: list[str], cwd: Path, log_dir: Path, timeout: float | 
         peak_rss_bytes=peak_rss,
         stdout_path=stdout_path,
         stderr_path=stderr_path,
+        resource_source="psutil_process_tree",
+    )
+
+
+def _gnu_time_metrics(stderr_text: str) -> tuple[float, int]:
+    values: dict[str, str] = {}
+    for line in stderr_text.splitlines():
+        stripped = line.strip()
+        for key in (
+            "User time (seconds)",
+            "System time (seconds)",
+            "Maximum resident set size (kbytes)",
+        ):
+            prefix = f"{key}:"
+            if stripped.startswith(prefix):
+                values[key] = stripped.removeprefix(prefix).strip()
+    required = {
+        "User time (seconds)",
+        "System time (seconds)",
+        "Maximum resident set size (kbytes)",
+    }
+    if values.keys() < required:
+        raise ValueError("GNU time -v metrics are missing from stderr")
+    cpu_seconds = float(values["User time (seconds)"]) + float(values["System time (seconds)"])
+    peak_rss_bytes = int(values["Maximum resident set size (kbytes)"]) * 1024
+    return cpu_seconds, peak_rss_bytes
+
+
+def run_measured_wsl(command: list[str], cwd: Path, log_dir: Path, timeout: float | None = None) -> ProcessResult:
+    if not command or Path(command[0]).name.lower() != "wsl.exe":
+        raise ValueError("WSL measurement requires a wsl.exe command")
+    timed_command = [command[0], "/usr/bin/time", "-v", *command[1:]]
+    measured = run_measured(timed_command, cwd, log_dir, timeout)
+    cpu_seconds, peak_rss_bytes = _gnu_time_metrics(measured.stderr_path.read_text(encoding="utf-8", errors="replace"))
+    return ProcessResult(
+        command=timed_command,
+        returncode=measured.returncode,
+        wall_seconds=measured.wall_seconds,
+        cpu_seconds=cpu_seconds,
+        peak_rss_bytes=peak_rss_bytes,
+        stdout_path=measured.stdout_path,
+        stderr_path=measured.stderr_path,
+        resource_source="gnu_time_v_inside_wsl",
     )

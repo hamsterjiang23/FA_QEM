@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import subprocess
 from pathlib import Path
 from typing import Any, cast
 
@@ -8,6 +10,42 @@ import trimesh
 
 from .mesh import geometric_weld, load_mesh, mesh_topology
 from .texture import _sample_image
+
+
+def external_mesh_inspection(executable: Path, mesh_path: Path, workspace: Path) -> dict[str, Any]:
+    if not executable.is_file():
+        return {"status": "unavailable", "executable": str(executable)}
+    completed = subprocess.run(
+        [
+            str(executable),
+            "mesh-repair",
+            "inspect",
+            str(mesh_path),
+            "--workspace",
+            str(workspace),
+            "--json",
+        ],
+        cwd=workspace,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    if completed.returncode != 0:
+        return {
+            "status": "failed",
+            "returncode": completed.returncode,
+            "stderr": completed.stderr[-2000:],
+        }
+    payload = json.loads(completed.stdout)
+    tool_metrics = payload.get("metrics", {})
+    return {
+        "status": payload.get("status"),
+        "tool": payload.get("tool"),
+        "tool_version": payload.get("tool_version"),
+        "self_intersections": tool_metrics.get("self_intersections"),
+        "hard_constraints": tool_metrics.get("hard_constraints"),
+    }
 
 
 def _sample(mesh: trimesh.Trimesh, count: int, seed: int) -> np.ndarray:
@@ -35,6 +73,39 @@ def geometry_metrics(reference: trimesh.Trimesh, result: trimesh.Trimesh, count:
         ),
         "mean_distance_result_to_reference": float(np.mean(result_to_reference)),
         "mean_distance_reference_to_result": float(np.mean(reference_to_result)),
+    }
+
+
+def triangle_quality(mesh: trimesh.Trimesh) -> dict[str, float | str]:
+    triangles = np.asarray(mesh.triangles, dtype=np.float64)
+    edge_lengths = np.stack(
+        (
+            np.linalg.norm(triangles[:, 1] - triangles[:, 0], axis=1),
+            np.linalg.norm(triangles[:, 2] - triangles[:, 1], axis=1),
+            np.linalg.norm(triangles[:, 0] - triangles[:, 2], axis=1),
+        ),
+        axis=1,
+    )
+    a, b, c = edge_lengths[:, 0], edge_lengths[:, 1], edge_lengths[:, 2]
+    cosine = np.column_stack(
+        (
+            (a * a + c * c - b * b) / np.maximum(2.0 * a * c, 1e-30),
+            (a * a + b * b - c * c) / np.maximum(2.0 * a * b, 1e-30),
+            (b * b + c * c - a * a) / np.maximum(2.0 * b * c, 1e-30),
+        )
+    )
+    angles = np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0)))
+    area = 0.5 * np.linalg.norm(
+        np.cross(triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0]),
+        axis=1,
+    )
+    longest = edge_lengths.max(axis=1)
+    aspect = np.sqrt(3.0) * longest * longest / np.maximum(4.0 * area, 1e-30)
+    return {
+        "minimum_angle_degrees": float(np.min(angles)),
+        "aspect_ratio_definition": "sqrt(3)*longest_edge^2/(4*triangle_area); equilateral=1",
+        "aspect_ratio_p95": float(np.percentile(aspect, 95)),
+        "aspect_ratio_maximum": float(np.max(aspect)),
     }
 
 
@@ -121,6 +192,7 @@ def evaluate_paths(
             "original_units": original,
         },
         "topology": topology,
+        "triangle_quality": triangle_quality(result),
     }
     if texture_count is not None:
         try:

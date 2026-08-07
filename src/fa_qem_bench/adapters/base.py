@@ -11,7 +11,7 @@ import numpy as np
 from trimesh.sample import sample_surface
 
 from ..mesh import load_mesh
-from ..process import ProcessResult, run_measured
+from ..process import ProcessResult, run_measured, run_measured_wsl
 from ..util import sha256_file
 
 
@@ -58,6 +58,8 @@ class ExecutableAdapter(BaselineAdapter):
         return executable.is_file(), str(executable)
 
     def measured(self, command: list[str], context: AdapterContext) -> ProcessResult:
+        if command and Path(command[0]).name.lower() == "wsl.exe":
+            return run_measured_wsl(command, context.root, context.run_dir / "logs")
         return run_measured(command, context.root, context.run_dir / "logs")
 
 
@@ -81,17 +83,18 @@ class QSlimAdapter(BaselineAdapter):
             PaperExecutableAdapter._wsl_path(output),
             PaperExecutableAdapter._wsl_path(context.prepared_mesh),
         ]
-        measured = run_measured(command, context.root, context.run_dir / "logs")
+        measured = run_measured_wsl(command, context.root, context.run_dir / "logs")
         if measured.returncode != 0:
             raise RuntimeError(f"QSlim exited with {measured.returncode}")
         return AdapterResult(
             output=output,
             source=self.source,
-            command=command,
+            command=measured.command,
             timing={
                 "algorithm_wall_seconds": measured.wall_seconds,
                 "cpu_seconds": measured.cpu_seconds,
                 "peak_rss_bytes": measured.peak_rss_bytes,
+                "resource_measurement": measured.resource_source,
                 "repetitions": 1,
             },
             parameters={"target_faces": context.target_faces, "optimization": 3},
@@ -181,11 +184,12 @@ class PaperExecutableAdapter(ExecutableAdapter):
         return AdapterResult(
             output=output,
             source=self.source,
-            command=command,
+            command=measured.command,
             timing={
                 "algorithm_wall_seconds": measured.wall_seconds,
                 "cpu_seconds": measured.cpu_seconds,
                 "peak_rss_bytes": measured.peak_rss_bytes,
+                "resource_measurement": measured.resource_source,
                 "repetitions": 1,
             },
             parameters=parameters,
@@ -276,12 +280,13 @@ class RobustLPMAdapter(ExternalTemplateAdapter):
         return AdapterResult(
             output=output,
             source=self.source,
-            command=command,
+            command=measured.command,
             timing={
                 "algorithm_wall_seconds": measured.wall_seconds,
                 "calibration_wall_seconds": time.perf_counter() - calibration_start,
                 "cpu_seconds": measured.cpu_seconds,
                 "peak_rss_bytes": measured.peak_rss_bytes,
+                "resource_measurement": measured.resource_source,
                 "repetitions": 1,
             },
             parameters={
@@ -316,7 +321,7 @@ class ICEAdapter(ExternalTemplateAdapter):
                 str(target_vertices),
                 PaperExecutableAdapter._wsl_path(candidate),
             ]
-            measured = run_measured(
+            measured = run_measured_wsl(
                 command,
                 context.root,
                 context.run_dir / "logs" / f"ice-v{target_vertices}",
@@ -351,6 +356,7 @@ class ICEAdapter(ExternalTemplateAdapter):
                 "calibration_wall_seconds": time.perf_counter() - calibration_start,
                 "cpu_seconds": measured.cpu_seconds,
                 "peak_rss_bytes": measured.peak_rss_bytes,
+                "resource_measurement": measured.resource_source,
                 "repetitions": 1,
             },
             parameters={
@@ -388,7 +394,7 @@ class CWFAdapter(ExternalTemplateAdapter):
             PaperExecutableAdapter._wsl_path(initial_points),
             str(max_iterations),
         ]
-        measured = run_measured(command, context.run_dir, context.run_dir / "logs")
+        measured = run_measured_wsl(command, context.run_dir, context.run_dir / "logs")
         if measured.returncode != 0:
             raise RuntimeError(f"CWF exited with {measured.returncode}")
         candidates = sorted(context.run_dir.glob("Ours_*_Remesh.obj"))
@@ -400,11 +406,12 @@ class CWFAdapter(ExternalTemplateAdapter):
         return AdapterResult(
             output=output,
             source=self.source,
-            command=command,
+            command=measured.command,
             timing={
                 "algorithm_wall_seconds": measured.wall_seconds,
                 "cpu_seconds": measured.cpu_seconds,
                 "peak_rss_bytes": measured.peak_rss_bytes,
+                "resource_measurement": measured.resource_source,
                 "repetitions": 1,
             },
             parameters={
