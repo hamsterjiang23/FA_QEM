@@ -41,6 +41,7 @@
 - Report contact sheets were initially cached only by filename, so rerunning a baseline could leave a stale render. Report generation now deterministically redraws every available output before writing the summary.
 - The first full contact-sheet rebuild exceeded 11 minutes because per-face pixel-grid allocation scales badly on RobustLPM's extreme-aspect triangles. Preview rendering now uses depth-sorted polygon drawing with face-centroid texture sampling; quantitative texture metrics remain unchanged and use surface samples.
 - Research-track texture cells were initially blank because texture sampling is intentionally disabled before the common asset rebake. Evaluation and reports now store an explicit `N/A` status and reason instead of relying on an empty numeric field.
+- CWF was initially hard-coded to a single measured run at every ratio. Its first execution is now a runtime classification probe: runs at or above the one-hour threshold remain single-shot, while faster ratios treat the probe as the warmup and collect three fresh measured repetitions.
 
 ## Questions for review
 

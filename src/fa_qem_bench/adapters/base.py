@@ -496,9 +496,27 @@ class CWFAdapter(ExternalTemplateAdapter):
             PaperExecutableAdapter._wsl_path(initial_points),
             str(max_iterations),
         ]
-        measured = run_measured_wsl(command, context.run_dir, context.run_dir / "logs")
-        if measured.returncode != 0:
-            raise RuntimeError(f"CWF exited with {measured.returncode}")
+        probe = run_measured_wsl(command, context.run_dir, context.run_dir / "logs" / "classification-probe")
+        if probe.returncode != 0:
+            raise RuntimeError(f"CWF exited with {probe.returncode}")
+        slow_threshold = float(context.parameters.get("slow_threshold_seconds", 3600.0))
+        if probe.wall_seconds < slow_threshold:
+            _, results = run_repeated(
+                command,
+                context.run_dir,
+                context.run_dir / "logs" / "benchmark",
+                wsl=True,
+                warmups=0,
+                repetitions=int(context.parameters.get("timed_repetitions", 3)),
+            )
+            failed = next((result for result in results if result.returncode != 0), None)
+            if failed is not None:
+                raise RuntimeError(f"CWF benchmark exited with {failed.returncode}")
+            warmups = [probe]
+        else:
+            warmups = []
+            results = [probe]
+        measured = results[-1]
         candidates = sorted(context.run_dir.glob("Ours_*_Remesh.obj"))
         final_candidates = [path for path in candidates if "Iter" not in path.name]
         if len(final_candidates) != 1:
@@ -509,7 +527,11 @@ class CWFAdapter(ExternalTemplateAdapter):
             output=output,
             source=self.source,
             command=measured.command,
-            timing=_timing_summary([], [measured]),
+            timing={
+                **_timing_summary(warmups, results),
+                "classification_probe_wall_seconds": probe.wall_seconds,
+                "slow_threshold_seconds": slow_threshold,
+            },
             parameters={
                 "target_sites": target_sites,
                 "initialization": "seeded area-weighted source-surface samples",
