@@ -44,4 +44,17 @@ if(BUILD_TESTING)
     set_tests_properties(stmw_closed_mesh_has_no_virtual_edges PROPERTIES
         PASS_REGULAR_EXPRESSION "faces=4.*virtual_edges=0"
     )
+    add_test(
+        NAME qem4vr_welds_uv_seams
+        COMMAND paper_simplify
+            --method qem4vr
+            --input ${CMAKE_SOURCE_DIR}/tests/fixtures/qem4vr_uv_seam.obj
+            --output ${CMAKE_BINARY_DIR}/qem4vr-uv-seam.obj
+            --target-faces 4
+            --boundary-weight 5
+            --material-weight 1000
+    )
+    set_tests_properties(qem4vr_welds_uv_seams PROPERTIES
+        PASS_REGULAR_EXPRESSION "faces=4"
+    )
 endif()

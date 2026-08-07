@@ -111,13 +111,10 @@ def evaluate_paths(
         "mean_distance_reference_to_result": raw["mean_distance_reference_to_result"] * original_scale,
     }
     topology: dict[str, Any] = {"attribute_view": mesh_topology(result)}
-    if input_is_normalized:
-        topology["geometry_view"] = topology["attribute_view"]
-    else:
-        welded_vertices, welded_faces, _ = geometric_weld(np.asarray(result.vertices), np.asarray(result.faces))
-        topology["geometry_view"] = mesh_topology(
-            trimesh.Trimesh(vertices=welded_vertices, faces=welded_faces, process=False)
-        )
+    welded_vertices, welded_faces, _ = geometric_weld(np.asarray(result.vertices), np.asarray(result.faces))
+    topology["geometry_view"] = mesh_topology(
+        trimesh.Trimesh(vertices=welded_vertices, faces=welded_faces, process=False)
+    )
     metrics: dict[str, Any] = {
         "geometry": {
             "normalized_unit_diagonal": normalized,

@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import trimesh
+
 from .adapters import AdapterContext, adapter_for
 from .config import ExperimentConfig
-from .mesh import load_mesh, mesh_topology
+from .mesh import geometric_weld, load_mesh, mesh_topology
 from .records import RunRecord, RunStatus
 from .util import environment_snapshot, sha256_file
 
@@ -65,7 +67,15 @@ def run_baseline(config: ExperimentConfig, method: str, ratio: str) -> RunRecord
         record.command = result.command
         record.timing = result.timing
         record.parameters.update(result.parameters)
-        record.metrics["native_topology"] = mesh_topology(output_mesh)
+        attribute_topology = mesh_topology(output_mesh)
+        welded_vertices, welded_faces, _ = geometric_weld(output_mesh.vertices, output_mesh.faces)
+        welded_mesh = trimesh.Trimesh(
+            vertices=welded_vertices,
+            faces=welded_faces,
+            process=False,
+        )
+        record.metrics["native_topology"] = mesh_topology(welded_mesh)
+        record.metrics["native_attribute_topology"] = attribute_topology
         record.metrics["target_relative_error"] = relative_error
     except Exception as error:  # boundary records failures rather than hiding them
         record.status = RunStatus.ALGORITHM_FAILURE

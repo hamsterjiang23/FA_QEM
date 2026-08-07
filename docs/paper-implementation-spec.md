@@ -6,12 +6,13 @@ Source: Bahirat et al., *Designing and Evaluating a Mesh Simplification Algorith
 
 Implemented semantics:
 
-- Garland-Heckbert memory quadrics and optimal edge-collapse placement.
-- Boundary constraint planes whose weight increases with boundary turning curvature, so curved boundaries resist collapse more than near-linear boundaries.
-- UV, normal, and material discontinuities contribute explicit collapse penalties; merged attributes propagate by normalized averaging.
+- Garland-Heckbert memory quadrics with the paper's subset endpoint-placement policy.
+- Exact-position duplicate welding retains per-corner UV and normal values, so texture seams do not become false geometric boundaries.
+- Boundary constraint planes are multiplied independently by each endpoint's discrete curve curvature from equations (4)–(6). Boundary vertices with other than two boundary neighbors are marked complex and excluded from collapse.
+- Vertices associated with multiple material or texture values have their quadrics multiplied by the published material weight. During collapse, per-face UV and normals use the closest attribute at the selected endpoint subject to matching material indices.
 - Face-flip and degenerate-face rejection keeps valid local geometry.
 
-The paper is closed-access in the available environment. Numeric weights are therefore declared experiment parameters and must be reported as reproduction assumptions rather than official defaults.
+The experimental values published in section 4 are used directly: boundary weight `W_b=5` and material/critical-vertex weight `W_t=1000`. The paper's historical code URL no longer exposes a discoverable download, so this remains a clean-room paper reimplementation rather than the official executable.
 
 ## STMW
 

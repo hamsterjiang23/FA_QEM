@@ -6,3 +6,4 @@ def test_native_fixtures_are_tracked() -> None:
     assert (fixture_root / "octahedron.obj").is_file()
     assert (fixture_root / "disconnected_triangles.obj").is_file()
     assert (fixture_root / "interior_close_triangles.obj").is_file()
+    assert (fixture_root / "qem4vr_uv_seam.obj").is_file()

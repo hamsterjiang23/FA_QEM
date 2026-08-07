@@ -6,6 +6,8 @@ from typing import Any
 
 import numpy as np
 import trimesh
+from scipy.sparse import coo_matrix
+from scipy.sparse.csgraph import connected_components
 
 from .util import atomic_json, sha256_file
 
@@ -72,7 +74,21 @@ def geometric_weld(
 def mesh_topology(mesh: trimesh.Trimesh) -> dict[str, Any]:
     faces = np.asarray(mesh.faces, dtype=np.int64)
     edges = np.sort(faces[:, [[0, 1], [1, 2], [2, 0]]].reshape(-1, 2), axis=1)
-    _, counts = np.unique(edges, axis=0, return_counts=True)
+    unique_edges, counts = np.unique(edges, axis=0, return_counts=True)
+    used_vertices = np.unique(faces)
+    vertex_remap = np.full(len(mesh.vertices), -1, dtype=np.int64)
+    vertex_remap[used_vertices] = np.arange(len(used_vertices), dtype=np.int64)
+    graph_edges = vertex_remap[unique_edges]
+    graph = coo_matrix(
+        (
+            np.ones(len(graph_edges) * 2, dtype=np.uint8),
+            (
+                np.concatenate((graph_edges[:, 0], graph_edges[:, 1])),
+                np.concatenate((graph_edges[:, 1], graph_edges[:, 0])),
+            ),
+        ),
+        shape=(len(used_vertices), len(used_vertices)),
+    ).tocsr()
     areas = np.asarray(mesh.area_faces)
     return {
         "vertices": int(len(mesh.vertices)),
@@ -80,7 +96,7 @@ def mesh_topology(mesh: trimesh.Trimesh) -> dict[str, Any]:
         "boundary_edges": int(np.count_nonzero(counts == 1)),
         "nonmanifold_edges": int(np.count_nonzero(counts > 2)),
         "degenerate_faces": int(np.count_nonzero(~np.isfinite(areas) | (areas <= 1e-15))),
-        "components": int(len(mesh.split(only_watertight=False))),
+        "components": int(connected_components(graph, directed=False, return_labels=False)),
         "watertight": bool(mesh.is_watertight),
         "winding_consistent": bool(mesh.is_winding_consistent),
         "finite_vertices": bool(np.isfinite(mesh.vertices).all()),

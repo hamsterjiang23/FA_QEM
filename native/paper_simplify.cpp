@@ -42,18 +42,19 @@ struct EdgeHash {
 
 struct Face {
     std::array<int, 3> v{};
+    std::array<Vec2, 3> uv{};
+    std::array<Vec3, 3> normal{};
+    std::array<bool, 3> has_uv{};
+    std::array<bool, 3> has_normal{};
     int material{};
     bool active{true};
 };
 
 struct Vertex {
     Vec3 p{Vec3::Zero()};
-    Vec2 uv{Vec2::Zero()};
-    Vec3 normal{Vec3::Zero()};
     Mat4 memory_quadric{Mat4::Zero()};
-    bool has_uv{false};
-    bool has_normal{false};
     bool active{true};
+    bool complex_boundary{false};
     std::uint64_t revision{0};
     std::unordered_set<int> faces;
     std::unordered_set<int> neighbors;
@@ -84,10 +85,7 @@ struct Options {
     fs::path successive_map;
     std::size_t target_faces{};
     double virtual_radius{0.01};
-    double boundary_weight{1000.0};
-    double curvature_gain{10.0};
-    double uv_weight{10.0};
-    double normal_weight{1.0};
+    double boundary_weight{5.0};
     double material_weight{1000.0};
 };
 
@@ -98,6 +96,7 @@ struct Candidate {
     std::uint64_t revision_a{};
     std::uint64_t revision_b{};
     Vec3 position{Vec3::Zero()};
+    int target_endpoint{-1};
     bool operator>(const Candidate& other) const {
         if (cost != other.cost) return cost > other.cost;
         if (a != other.a) return a > other.a;
@@ -153,10 +152,6 @@ static Mesh load_obj(const fs::path& path) {
     std::unordered_map<std::string, int> materials;
     int current_material = 0;
     Mesh mesh;
-    std::vector<Vec2> uv_sum;
-    std::vector<Vec3> normal_sum;
-    std::vector<int> uv_count;
-    std::vector<int> normal_count;
     std::string line;
     while (std::getline(input, line)) {
         if (line.rfind("v ", 0) == 0) {
@@ -164,10 +159,6 @@ static Mesh load_obj(const fs::path& path) {
             Vec3 point;
             values >> point.x() >> point.y() >> point.z();
             positions.push_back(point);
-            uv_sum.push_back(Vec2::Zero());
-            normal_sum.push_back(Vec3::Zero());
-            uv_count.push_back(0);
-            normal_count.push_back(0);
         } else if (line.rfind("vt ", 0) == 0) {
             std::stringstream values(line.substr(3));
             Vec2 uv;
@@ -195,34 +186,52 @@ static Mesh load_obj(const fs::path& path) {
                 if (fields.size() > 1) uv = obj_index(fields[1], texcoords.size());
                 if (fields.size() > 2) normal = obj_index(fields[2], normals.size());
                 corners.push_back({vertex, uv, normal});
-                if (uv >= 0) {
-                    uv_sum[vertex] += texcoords.at(static_cast<std::size_t>(uv));
-                    ++uv_count[vertex];
-                }
-                if (normal >= 0) {
-                    normal_sum[vertex] += normals.at(static_cast<std::size_t>(normal));
-                    ++normal_count[vertex];
-                }
             }
             for (std::size_t i = 1; i + 1 < corners.size(); ++i) {
-                mesh.faces.push_back({{corners[0][0], corners[i][0], corners[i + 1][0]}, current_material, true});
+                const std::array<std::array<int, 3>, 3> triangle{corners[0], corners[i], corners[i + 1]};
+                Face face;
+                face.material = current_material;
+                for (int corner = 0; corner < 3; ++corner) {
+                    face.v[corner] = triangle[corner][0];
+                    if (triangle[corner][1] >= 0) {
+                        face.uv[corner] = texcoords.at(static_cast<std::size_t>(triangle[corner][1]));
+                        face.has_uv[corner] = true;
+                    }
+                    if (triangle[corner][2] >= 0) {
+                        face.normal[corner] = normals.at(static_cast<std::size_t>(triangle[corner][2]));
+                        face.has_normal[corner] = true;
+                    }
+                }
+                mesh.faces.push_back(std::move(face));
             }
         }
     }
     mesh.vertices.resize(positions.size());
     for (std::size_t i = 0; i < positions.size(); ++i) {
         mesh.vertices[i].p = positions[i];
-        if (uv_count[i] > 0) {
-            mesh.vertices[i].uv = uv_sum[i] / static_cast<double>(uv_count[i]);
-            mesh.vertices[i].has_uv = true;
-        }
-        if (normal_count[i] > 0 && normal_sum[i].norm() > 0) {
-            mesh.vertices[i].normal = normal_sum[i].normalized();
-            mesh.vertices[i].has_normal = true;
-        }
     }
     mesh.active_faces = mesh.faces.size();
     return mesh;
+}
+
+static void weld_duplicate_positions(Mesh& mesh) {
+    std::unordered_map<std::string, int> unique;
+    std::vector<Vertex> vertices;
+    std::vector<int> remap(mesh.vertices.size(), -1);
+    vertices.reserve(mesh.vertices.size());
+    for (std::size_t index = 0; index < mesh.vertices.size(); ++index) {
+        const Vec3& point = mesh.vertices[index].p;
+        std::ostringstream stream;
+        stream << std::setprecision(17) << (point.x() == 0.0 ? 0.0 : point.x()) << ':'
+               << (point.y() == 0.0 ? 0.0 : point.y()) << ':' << (point.z() == 0.0 ? 0.0 : point.z());
+        auto [iterator, inserted] = unique.emplace(stream.str(), static_cast<int>(vertices.size()));
+        if (inserted) vertices.push_back(mesh.vertices[index]);
+        remap[index] = iterator->second;
+    }
+    for (Face& face : mesh.faces) {
+        for (int& vertex : face.v) vertex = remap[vertex];
+    }
+    mesh.vertices = std::move(vertices);
 }
 
 static Mat4 plane_quadric(const Vec3& normal, const Vec3& point, double weight = 1.0) {
@@ -267,6 +276,32 @@ static std::unordered_map<Edge, int, EdgeHash> edge_counts(const Mesh& mesh) {
     return counts;
 }
 
+static std::vector<Vec2> vertex_uvs(const Mesh& mesh, int vertex, std::optional<int> material = std::nullopt) {
+    std::vector<Vec2> result;
+    for (const int face_index : mesh.vertices[vertex].faces) {
+        const Face& face = mesh.faces[face_index];
+        if (!face.active || (material.has_value() && face.material != *material)) continue;
+        for (int corner = 0; corner < 3; ++corner) {
+            if (face.v[corner] == vertex && face.has_uv[corner]) result.push_back(face.uv[corner]);
+        }
+    }
+    return result;
+}
+
+static bool is_attribute_critical(const Mesh& mesh, int vertex) {
+    std::unordered_set<int> materials;
+    for (const int face_index : mesh.vertices[vertex].faces) {
+        if (mesh.faces[face_index].active) materials.insert(mesh.faces[face_index].material);
+    }
+    if (materials.size() > 1) return true;
+    const std::vector<Vec2> uvs = vertex_uvs(mesh, vertex);
+    if (uvs.size() < 2) return false;
+    for (std::size_t index = 1; index < uvs.size(); ++index) {
+        if ((uvs[index] - uvs[0]).squaredNorm() > 1e-24) return true;
+    }
+    return false;
+}
+
 static void initialize_quadrics(Mesh& mesh, const Options& options) {
     for (auto& vertex : mesh.vertices) vertex.memory_quadric.setZero();
     for (const auto& face : mesh.faces) {
@@ -280,24 +315,26 @@ static void initialize_quadrics(Mesh& mesh, const Options& options) {
     }
     if (options.method != "qem4vr") return;
     const auto counts = edge_counts(mesh);
-    std::vector<std::vector<Vec3>> boundary_directions(mesh.vertices.size());
+    std::vector<std::vector<int>> boundary_neighbors(mesh.vertices.size());
     for (const auto& [edge, count] : counts) {
         if (count != 1) continue;
-        const Vec3 direction = (mesh.vertices[edge.b].p - mesh.vertices[edge.a].p).normalized();
-        boundary_directions[edge.a].push_back(direction);
-        boundary_directions[edge.b].push_back(-direction);
+        boundary_neighbors[edge.a].push_back(edge.b);
+        boundary_neighbors[edge.b].push_back(edge.a);
     }
-    auto curvature = [&](int vertex) {
-        const auto& directions = boundary_directions[vertex];
-        if (directions.size() < 2) return 0.0;
-        double maximum = 0.0;
-        for (std::size_t i = 0; i < directions.size(); ++i) {
-            for (std::size_t j = i + 1; j < directions.size(); ++j) {
-                maximum = std::max(maximum, 1.0 - std::clamp(directions[i].dot(directions[j]), -1.0, 1.0));
-            }
+    std::vector<double> curvature(mesh.vertices.size(), 0.0);
+    for (std::size_t vertex = 0; vertex < mesh.vertices.size(); ++vertex) {
+        const auto& neighbors = boundary_neighbors[vertex];
+        if (neighbors.empty()) continue;
+        if (neighbors.size() != 2) {
+            mesh.vertices[vertex].complex_boundary = true;
+            continue;
         }
-        return maximum;
-    };
+        const Vec3 first = mesh.vertices[neighbors[1]].p - mesh.vertices[neighbors[0]].p;
+        const Vec3 second = mesh.vertices[neighbors[1]].p - 2.0 * mesh.vertices[vertex].p +
+                            mesh.vertices[neighbors[0]].p;
+        const double speed = first.norm();
+        if (speed > 1e-15) curvature[vertex] = first.cross(second).norm() / (speed * speed * speed);
+    }
     for (const auto& [edge, count] : counts) {
         if (count != 1) continue;
         int face_index = -1;
@@ -317,11 +354,14 @@ static void initialize_quadrics(Mesh& mesh, const Options& options) {
         if (face_normal.norm() <= 1e-15) continue;
         face_normal.normalize();
         Vec3 constraint_normal = (b - a).normalized().cross(face_normal).normalized();
-        const double curve = std::max(curvature(edge.a), curvature(edge.b));
-        const double weight = options.boundary_weight * (1.0 + options.curvature_gain * curve);
-        const Mat4 boundary = plane_quadric(constraint_normal, a, weight);
-        mesh.vertices[edge.a].memory_quadric += boundary;
-        mesh.vertices[edge.b].memory_quadric += boundary;
+        const Mat4 boundary = plane_quadric(constraint_normal, a);
+        mesh.vertices[edge.a].memory_quadric += options.boundary_weight * curvature[edge.a] * boundary;
+        mesh.vertices[edge.b].memory_quadric += options.boundary_weight * curvature[edge.b] * boundary;
+    }
+    for (std::size_t vertex = 0; vertex < mesh.vertices.size(); ++vertex) {
+        if (is_attribute_critical(mesh, static_cast<int>(vertex))) {
+            mesh.vertices[vertex].memory_quadric *= options.material_weight;
+        }
     }
 }
 
@@ -506,14 +546,6 @@ static Vec3 optimal_position(const Mat4& quadric, const Vec3& a, const Vec3& b) 
     });
 }
 
-static std::unordered_set<int> materials_at(const Mesh& mesh, int vertex) {
-    std::unordered_set<int> materials;
-    for (const int face_index : mesh.vertices[vertex].faces) {
-        if (mesh.faces[face_index].active) materials.insert(mesh.faces[face_index].material);
-    }
-    return materials;
-}
-
 static int active_edge_incidence(const Mesh& mesh, int a, int b) {
     const auto& first = mesh.vertices[a].faces;
     const auto& second = mesh.vertices[b].faces;
@@ -563,16 +595,18 @@ static Candidate candidate_for(const Mesh& mesh, int a, int b, const Options& op
     const Vertex& second = mesh.vertices[b];
     Mat4 quadric = first.memory_quadric + second.memory_quadric;
     if (options.method == "stmw") quadric += memoryless_area_quadric(mesh, a, b);
-    const Vec3 position = optimal_position(quadric, first.p, second.p);
-    double cost = std::max(0.0, evaluate(quadric, position));
+    Vec3 position;
+    int target_endpoint = -1;
     if (options.method == "qem4vr") {
-        if (first.has_uv && second.has_uv) cost += options.uv_weight * (first.uv - second.uv).squaredNorm();
-        if (first.has_normal && second.has_normal) {
-            cost += options.normal_weight * (1.0 - std::clamp(first.normal.dot(second.normal), -1.0, 1.0));
-        }
-        if (materials_at(mesh, a) != materials_at(mesh, b)) cost += options.material_weight;
+        const double at_first = evaluate(quadric, first.p);
+        const double at_second = evaluate(quadric, second.p);
+        target_endpoint = at_first <= at_second ? a : b;
+        position = mesh.vertices[target_endpoint].p;
+    } else {
+        position = optimal_position(quadric, first.p, second.p);
     }
-    return {cost, a, b, first.revision, second.revision, position};
+    const double cost = std::max(0.0, evaluate(quadric, position));
+    return {cost, a, b, first.revision, second.revision, position, target_endpoint};
 }
 
 static bool edge_exists(const Mesh& mesh, int a, int b) {
@@ -580,6 +614,7 @@ static bool edge_exists(const Mesh& mesh, int a, int b) {
 }
 
 static bool collapse_valid(const Mesh& mesh, const Candidate& candidate) {
+    if (mesh.vertices[candidate.a].complex_boundary || mesh.vertices[candidate.b].complex_boundary) return false;
     const bool physical_edge = mesh.vertices[candidate.a].neighbors.contains(candidate.b);
     if (physical_edge) {
         std::unordered_set<int> common;
@@ -649,6 +684,24 @@ static std::vector<int> collapse(
             history.before.push_back(std::move(snapshot));
         }
     }
+    struct CornerAttribute {
+        Vec2 uv{Vec2::Zero()};
+        Vec3 normal{Vec3::Zero()};
+        bool has_uv{false};
+        bool has_normal{false};
+    };
+    std::unordered_map<int, std::vector<CornerAttribute>> target_attributes;
+    if (candidate.target_endpoint >= 0) {
+        for (const int face_index : mesh.vertices[candidate.target_endpoint].faces) {
+            const Face& face = mesh.faces[face_index];
+            if (!face.active) continue;
+            for (int corner = 0; corner < 3; ++corner) {
+                if (face.v[corner] != candidate.target_endpoint) continue;
+                target_attributes[face.material].push_back(
+                    {face.uv[corner], face.normal[corner], face.has_uv[corner], face.has_normal[corner]});
+            }
+        }
+    }
     std::unordered_set<int> impacted{candidate.a, candidate.b};
     for (const int face_index : affected) {
         const Face& face = mesh.faces[face_index];
@@ -666,12 +719,45 @@ static std::vector<int> collapse(
         for (const int vertex : face.v) mesh.vertices[vertex].faces.erase(face_index);
     }
 
+    if (candidate.target_endpoint >= 0) {
+        const int non_target = candidate.target_endpoint == candidate.a ? candidate.b : candidate.a;
+        for (const int face_index : affected) {
+            Face& face = mesh.faces[face_index];
+            if (!face.active) continue;
+            const auto iterator = target_attributes.find(face.material);
+            for (int corner = 0; corner < 3; ++corner) {
+                if (face.v[corner] != non_target) continue;
+                if (iterator == target_attributes.end() || iterator->second.empty()) {
+                    if (face.has_uv[corner]) face.uv[corner].setZero();
+                    if (face.has_normal[corner]) face.normal[corner].setZero();
+                    continue;
+                }
+                const auto& choices = iterator->second;
+                if (face.has_uv[corner]) {
+                    const auto best = std::min_element(choices.begin(), choices.end(), [&](const auto& left, const auto& right) {
+                        const double left_error = left.has_uv ? (left.uv - face.uv[corner]).squaredNorm()
+                                                              : std::numeric_limits<double>::infinity();
+                        const double right_error = right.has_uv ? (right.uv - face.uv[corner]).squaredNorm()
+                                                                : std::numeric_limits<double>::infinity();
+                        return left_error < right_error;
+                    });
+                    if (best != choices.end() && best->has_uv) face.uv[corner] = best->uv;
+                }
+                if (face.has_normal[corner]) {
+                    const auto best = std::min_element(choices.begin(), choices.end(), [&](const auto& left, const auto& right) {
+                        const double left_error = left.has_normal ? (left.normal - face.normal[corner]).squaredNorm()
+                                                                  : std::numeric_limits<double>::infinity();
+                        const double right_error = right.has_normal ? (right.normal - face.normal[corner]).squaredNorm()
+                                                                    : std::numeric_limits<double>::infinity();
+                        return left_error < right_error;
+                    });
+                    if (best != choices.end() && best->has_normal) face.normal[corner] = best->normal;
+                }
+            }
+        }
+    }
     keep.p = candidate.position;
     keep.memory_quadric += remove.memory_quadric;
-    if (keep.has_uv && remove.has_uv) keep.uv = 0.5 * (keep.uv + remove.uv);
-    if (keep.has_normal && remove.has_normal && (keep.normal + remove.normal).norm() > 0) {
-        keep.normal = (keep.normal + remove.normal).normalized();
-    }
     for (const int face_index : affected) {
         Face& face = mesh.faces[face_index];
         if (!face.active) continue;
@@ -782,6 +868,11 @@ static void write_obj(const Mesh& mesh, const fs::path& path) {
     if (!output) throw std::runtime_error("cannot write OBJ: " + path.string());
     output << std::setprecision(17);
     std::vector<int> remap(mesh.vertices.size(), -1);
+    std::vector<int> active_faces;
+    active_faces.reserve(mesh.active_faces);
+    bool has_uv = false;
+    bool has_normal = false;
+    std::unordered_set<int> materials;
     int next = 1;
     for (std::size_t index = 0; index < mesh.vertices.size(); ++index) {
         if (!mesh.vertices[index].active || mesh.vertices[index].faces.empty()) continue;
@@ -789,9 +880,55 @@ static void write_obj(const Mesh& mesh, const fs::path& path) {
         const Vec3& point = mesh.vertices[index].p;
         output << "v " << point.x() << ' ' << point.y() << ' ' << point.z() << '\n';
     }
-    for (const auto& face : mesh.faces) {
+    for (std::size_t face_index = 0; face_index < mesh.faces.size(); ++face_index) {
+        const Face& face = mesh.faces[face_index];
         if (!face.active) continue;
-        output << "f " << remap[face.v[0]] << ' ' << remap[face.v[1]] << ' ' << remap[face.v[2]] << '\n';
+        active_faces.push_back(static_cast<int>(face_index));
+        materials.insert(face.material);
+        for (int corner = 0; corner < 3; ++corner) {
+            has_uv = has_uv || face.has_uv[corner];
+            has_normal = has_normal || face.has_normal[corner];
+        }
+    }
+    if (has_uv) {
+        for (const int face_index : active_faces) {
+            const Face& face = mesh.faces[face_index];
+            for (int corner = 0; corner < 3; ++corner) {
+                Vec2 uv = Vec2::Zero();
+                if (face.has_uv[corner]) uv = face.uv[corner];
+                output << "vt " << uv.x() << ' ' << uv.y() << '\n';
+            }
+        }
+    }
+    if (has_normal) {
+        for (const int face_index : active_faces) {
+            const Face& face = mesh.faces[face_index];
+            Vec3 fallback = (mesh.vertices[face.v[1]].p - mesh.vertices[face.v[0]].p)
+                                .cross(mesh.vertices[face.v[2]].p - mesh.vertices[face.v[0]].p)
+                                .normalized();
+            for (int corner = 0; corner < 3; ++corner) {
+                Vec3 normal = fallback;
+                if (face.has_normal[corner]) normal = face.normal[corner];
+                if (normal.norm() > 0.0) normal.normalize();
+                output << "vn " << normal.x() << ' ' << normal.y() << ' ' << normal.z() << '\n';
+            }
+        }
+    }
+    int current_material = -1;
+    for (std::size_t output_face = 0; output_face < active_faces.size(); ++output_face) {
+        const Face& face = mesh.faces[active_faces[output_face]];
+        if (materials.size() > 1 && face.material != current_material) {
+            output << "usemtl material_" << face.material << '\n';
+            current_material = face.material;
+        }
+        output << "f";
+        for (int corner = 0; corner < 3; ++corner) {
+            const int attribute = static_cast<int>(output_face * 3 + corner + 1);
+            output << ' ' << remap[face.v[corner]];
+            if (has_uv) output << '/' << attribute;
+            if (has_normal) output << (has_uv ? "/" : "//") << attribute;
+        }
+        output << '\n';
     }
 }
 
@@ -875,9 +1012,6 @@ static Options parse_options(int argc, char** argv) {
         else if (key == "--successive-map") options.successive_map = value;
         else if (key == "--virtual-radius") options.virtual_radius = std::stod(value);
         else if (key == "--boundary-weight") options.boundary_weight = std::stod(value);
-        else if (key == "--curvature-gain") options.curvature_gain = std::stod(value);
-        else if (key == "--uv-weight") options.uv_weight = std::stod(value);
-        else if (key == "--normal-weight") options.normal_weight = std::stod(value);
         else if (key == "--material-weight") options.material_weight = std::stod(value);
         else throw std::runtime_error("unknown option: " + key);
     }
@@ -897,6 +1031,7 @@ int main(int argc, char** argv) {
     try {
         const Options options = parse_options(argc, argv);
         Mesh mesh = load_obj(options.input);
+        if (options.method == "qem4vr") weld_duplicate_positions(mesh);
         if (options.target_faces >= mesh.faces.size()) throw std::runtime_error("target must be below input face count");
         simplify(mesh, options);
         write_obj(mesh, options.output);

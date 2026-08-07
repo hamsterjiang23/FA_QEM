@@ -14,7 +14,7 @@ from trimesh.visual.material import PBRMaterial
 from trimesh.visual.texture import TextureVisuals
 
 from .config import ExperimentConfig
-from .mesh import Transform, load_mesh, restored_vertices
+from .mesh import Transform, geometric_weld, load_mesh, restored_vertices
 from .runner import load_run_record
 from .successive import atlas_faces_to_target_faces, load_successive_map, map_points_successively
 from .util import atomic_json, sha256_file
@@ -176,6 +176,8 @@ def bake_pbr_asset(
     source_visual = cast(Any, source.visual)
     source_uv = np.asarray(source_visual.uv, dtype=np.float64)
     material = cast(Any, source_visual.material)
+    target_vertices, target_faces, _ = geometric_weld(target.vertices, target.faces)
+    target = trimesh.Trimesh(vertices=target_vertices, faces=target_faces, process=False)
 
     mapping, atlas_faces, atlas_uv = xatlas.parametrize(
         np.asarray(target.vertices, dtype=np.float32), np.asarray(target.faces, dtype=np.uint32)

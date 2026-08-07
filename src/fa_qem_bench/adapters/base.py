@@ -145,13 +145,30 @@ class PaperExecutableAdapter(ExecutableAdapter):
             "--checkpoint-dir",
             native(context.run_dir / "checkpoints"),
         ]
+        parameters = dict(context.parameters)
         successive_map = context.run_dir / "successive-map.bin"
         if self.name == "stmw":
-            command.extend(["--successive-map", native(successive_map)])
+            command.extend(
+                [
+                    "--virtual-radius",
+                    "0.01",
+                    "--successive-map",
+                    native(successive_map),
+                ]
+            )
+            parameters["virtual_radius_unit_diagonal"] = 0.01
+        elif self.name == "qem4vr":
+            command.extend(["--boundary-weight", "5", "--material-weight", "1000"])
+            parameters.update(
+                {
+                    "boundary_weight": 5.0,
+                    "material_critical_weight": 1000.0,
+                    "placement_policy": "subset_endpoint",
+                }
+            )
         measured = self.measured(command, context)
         if measured.returncode != 0:
             raise RuntimeError(f"{self.name} exited with {measured.returncode}")
-        parameters = dict(context.parameters)
         if self.name == "stmw":
             if not successive_map.is_file():
                 raise RuntimeError("STMW did not produce its successive mapping history")
@@ -177,7 +194,7 @@ class PaperExecutableAdapter(ExecutableAdapter):
 
 class QEM4VRAdapter(PaperExecutableAdapter):
     name = "qem4vr"
-    source = "paper-guided local reimplementation; assumptions disclosed"
+    source = "paper-guided local reimplementation; published weights"
 
 
 class STMWAdapter(PaperExecutableAdapter):

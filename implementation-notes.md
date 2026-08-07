@@ -11,7 +11,7 @@
 - The user added a GitHub synchronization requirement after implementation began. Core source and reproducibility metadata will be pushed; models, third-party code/binaries, and generated artifacts remain excluded.
 - Concurrent `uv run` commands raced while initializing the user-level cache on Windows. Verification commands now use the project-local `.uv-cache` and run sequentially.
 - Trimesh component splitting needs its optional `networkx` dependency on this input. It is now an explicit locked runtime dependency rather than an undeclared environment assumption.
-- QEM4VR is closed-access from this environment (ACM returned HTTP 403 and OpenAlex reports no OA copy). The first implementation exposes all non-paper numeric weights and labels them assumptions; exact defaults require a user-provided PDF or author clarification.
+- QEM4VR's ACM endpoint was inaccessible, but the complete author-uploaded text was later found through ResearchGate. It publishes `W_b=5`, `W_t=1000`, per-endpoint curve curvature, subset placement, complex-boundary rejection, and material-constrained closest attribute transfer; the implementation was revised to match those details.
 - STMW's first executable checkpoint used component-aware spatial vertex proximity for virtual-edge discovery. It has since been replaced by expanded-AABB candidate generation followed by exact triangle-to-triangle distance tests.
 - WSL 2 was adopted as the primary C++ build environment after the user authorized it. The minimal build toolchain is GCC 11.4, CMake, Ninja, and Eigen; Windows remains the host orchestrator.
 - QSlim 1.0 predates standard C++ headers and two-phase template lookup. The official source remains immutable; tracked compatibility headers are overlaid onto an ignored build copy. Its bundled SMF fixtures use CRLF and are normalized to LF only for the smoke test.
@@ -27,6 +27,9 @@
 - CWF's first real one-iteration probe produced 82,814 faces after roughly 20 minutes end-to-end and exposed non-manifold output on this input. The formal 50-iteration run is therefore isolated in a detached process and its native topology will be reported without repair-induced masking.
 - STMW now recomputes its boundary-edge area quadric per candidate without accumulating it, and discovers virtual edges with exact triangle-to-triangle distance inside an expanded-AABB hash. A regression fixture covers overlapping projected triangle interiors whose vertex pairs are all outside the virtual radius.
 - STMW texture transfer now records a versioned binary collapse lineage containing pre-collapse edge one-rings and post-collapse vertex one-rings. The asset baker traverses only relevant records in reverse, projects into each saved local one-ring, and reuses the final texel position throughout the traversal.
+- QEM4VR now welds exact duplicate positions while retaining per-corner UV/normal attributes, preventing texture seams from being treated as disconnected geometry. The research OBJ exports the transferred attributes; topology gates use a welded geometry view and preserve the attribute-split view separately.
+- The paper-correct QEM4VR 50% run reached exactly 82,470 faces in 7.56 seconds. Its welded geometry is one closed manifold component; the native OBJ also retains 247,410 per-corner attribute vertices, which are reported separately rather than misclassified as geometric cracks.
+- `trimesh.split` made component counting on fully split attribute views exceed the diagnostic timeout. Topology reporting now uses SciPy sparse connected components and computes both the attribute and `1e-6` welded geometry views in a few seconds.
 
 ## Questions for review
 
