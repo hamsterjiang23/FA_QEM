@@ -65,6 +65,7 @@ struct Mesh {
     std::vector<Face> faces;
     std::unordered_set<Edge, EdgeHash> virtual_edges;
     std::size_t active_faces{};
+    double bbox_diagonal{1.0};
 };
 
 struct FaceSnapshot {
@@ -87,6 +88,10 @@ struct Options {
     double virtual_radius{0.01};
     double boundary_weight{5.0};
     double material_weight{1000.0};
+    double area_weight{100.0};
+    double uv_weight{5000.0};
+    double normal_weight{0.01};
+    double plane_area_weight{1.0};
 };
 
 struct Candidate {
@@ -234,6 +239,61 @@ static void weld_duplicate_positions(Mesh& mesh) {
     mesh.vertices = std::move(vertices);
 }
 
+static std::string grid_key(const Eigen::Vector3i& cell) {
+    return std::to_string(cell.x()) + ":" + std::to_string(cell.y()) + ":" + std::to_string(cell.z());
+}
+
+static void weld_close_positions(Mesh& mesh, double tolerance) {
+    if (!(tolerance > 0.0)) return;
+    std::unordered_map<std::string, std::vector<int>> buckets;
+    std::vector<Vertex> vertices;
+    std::vector<int> remap(mesh.vertices.size(), -1);
+    vertices.reserve(mesh.vertices.size());
+    const double tolerance_squared = tolerance * tolerance;
+    for (std::size_t index = 0; index < mesh.vertices.size(); ++index) {
+        const Vec3& point = mesh.vertices[index].p;
+        const Eigen::Vector3i cell = (point / tolerance).array().floor().cast<int>();
+        int representative = -1;
+        for (int x = -1; x <= 1 && representative < 0; ++x) {
+            for (int y = -1; y <= 1 && representative < 0; ++y) {
+                for (int z = -1; z <= 1 && representative < 0; ++z) {
+                    const Eigen::Vector3i neighbor = cell + Eigen::Vector3i(x, y, z);
+                    const auto iterator = buckets.find(grid_key(neighbor));
+                    if (iterator == buckets.end()) continue;
+                    for (const int candidate : iterator->second) {
+                        if ((vertices[candidate].p - point).squaredNorm() < tolerance_squared) {
+                            representative = candidate;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        if (representative < 0) {
+            representative = static_cast<int>(vertices.size());
+            vertices.push_back(mesh.vertices[index]);
+            buckets[grid_key(cell)].push_back(representative);
+        }
+        remap[index] = representative;
+    }
+    for (Face& face : mesh.faces) {
+        for (int& vertex : face.v) vertex = remap[vertex];
+    }
+    mesh.vertices = std::move(vertices);
+}
+
+static double update_bbox_diagonal(Mesh& mesh) {
+    if (mesh.vertices.empty()) return mesh.bbox_diagonal = 1.0;
+    Vec3 minimum = mesh.vertices.front().p;
+    Vec3 maximum = minimum;
+    for (const Vertex& vertex : mesh.vertices) {
+        minimum = minimum.cwiseMin(vertex.p);
+        maximum = maximum.cwiseMax(vertex.p);
+    }
+    mesh.bbox_diagonal = std::max((maximum - minimum).norm(), 1e-30);
+    return mesh.bbox_diagonal;
+}
+
 static Mat4 plane_quadric(const Vec3& normal, const Vec3& point, double weight = 1.0) {
     Vec4 plane;
     plane << normal, -normal.dot(point);
@@ -302,18 +362,49 @@ static bool is_attribute_critical(const Mesh& mesh, int vertex) {
     return false;
 }
 
+static bool is_uv_seam(const Mesh& mesh, int vertex) {
+    const std::vector<Vec2> uvs = vertex_uvs(mesh, vertex);
+    if (uvs.size() < 2) return false;
+    for (std::size_t index = 1; index < uvs.size(); ++index) {
+        if ((uvs[index] - uvs[0]).squaredNorm() > 1e-24) return true;
+    }
+    return false;
+}
+
+static Mat4 raw_plane_quadric(const Vec3& direction, const Vec3& point) {
+    Vec4 plane;
+    plane << direction, -direction.dot(point);
+    return plane * plane.transpose();
+}
+
 static void initialize_quadrics(Mesh& mesh, const Options& options) {
     for (auto& vertex : mesh.vertices) vertex.memory_quadric.setZero();
+    std::vector<Vec3> accumulated_normals(mesh.vertices.size(), Vec3::Zero());
     for (const auto& face : mesh.faces) {
+        if (!face.active) continue;
         const Vec3& a = mesh.vertices[face.v[0]].p;
         const Vec3& b = mesh.vertices[face.v[1]].p;
         const Vec3& c = mesh.vertices[face.v[2]].p;
         const Vec3 cross = (b - a).cross(c - a);
         if (cross.squaredNorm() <= 1e-30) continue;
-        const Mat4 quadric = plane_quadric(cross.normalized(), a);
-        for (const int vertex : face.v) mesh.vertices[vertex].memory_quadric += quadric;
+        const double area = 0.5 * cross.norm();
+        const double weight = options.method == "fa-qem" ? 1.0 / (options.plane_area_weight * area) : 1.0;
+        const Mat4 quadric = plane_quadric(cross.normalized(), a, weight);
+        for (const int vertex : face.v) {
+            mesh.vertices[vertex].memory_quadric += quadric;
+            accumulated_normals[vertex] += cross;
+        }
     }
-    if (options.method != "qem4vr") return;
+    if (options.method == "fa-qem") {
+        for (std::size_t vertex = 0; vertex < mesh.vertices.size(); ++vertex) {
+            if (accumulated_normals[vertex].squaredNorm() <= 1e-30) continue;
+            mesh.vertices[vertex].memory_quadric += options.normal_weight *
+                                                      plane_quadric(
+                                                          accumulated_normals[vertex].normalized(),
+                                                          mesh.vertices[vertex].p);
+        }
+    }
+    if (options.method != "qem4vr" && options.method != "fa-qem") return;
     const auto counts = edge_counts(mesh);
     std::vector<std::vector<int>> boundary_neighbors(mesh.vertices.size());
     for (const auto& [edge, count] : counts) {
@@ -321,6 +412,7 @@ static void initialize_quadrics(Mesh& mesh, const Options& options) {
         boundary_neighbors[edge.a].push_back(edge.b);
         boundary_neighbors[edge.b].push_back(edge.a);
     }
+    for (auto& neighbors : boundary_neighbors) std::sort(neighbors.begin(), neighbors.end());
     std::vector<double> curvature(mesh.vertices.size(), 0.0);
     for (std::size_t vertex = 0; vertex < mesh.vertices.size(); ++vertex) {
         const auto& neighbors = boundary_neighbors[vertex];
@@ -335,32 +427,51 @@ static void initialize_quadrics(Mesh& mesh, const Options& options) {
         const double speed = first.norm();
         if (speed > 1e-15) curvature[vertex] = first.cross(second).norm() / (speed * speed * speed);
     }
-    for (const auto& [edge, count] : counts) {
-        if (count != 1) continue;
-        int face_index = -1;
-        for (const int candidate : mesh.vertices[edge.a].faces) {
-            const auto& face = mesh.faces[candidate];
-            if (std::find(face.v.begin(), face.v.end(), edge.b) != face.v.end()) {
-                face_index = candidate;
-                break;
+    if (options.method == "fa-qem") {
+        for (std::size_t vertex = 0; vertex < mesh.vertices.size(); ++vertex) {
+            const auto& neighbors = boundary_neighbors[vertex];
+            if (neighbors.size() != 2 || curvature[vertex] <= 0.0) continue;
+            const Vec3& v1 = mesh.vertices[vertex].p;
+            const Vec3& v2 = mesh.vertices[neighbors[0]].p;
+            const Vec3& v3 = mesh.vertices[neighbors[1]].p;
+            const Vec3 n1 = (v1 - v2).cross(v3 - v1);
+            const Vec3 direction = v1 - v2;
+            const Mat4 boundary = raw_plane_quadric(n1, v1) + raw_plane_quadric(direction, v1);
+            mesh.vertices[vertex].memory_quadric += options.boundary_weight * curvature[vertex] * boundary;
+        }
+        for (std::size_t vertex = 0; vertex < mesh.vertices.size(); ++vertex) {
+            if (is_uv_seam(mesh, static_cast<int>(vertex))) {
+                mesh.vertices[vertex].memory_quadric *= options.uv_weight;
             }
         }
-        if (face_index < 0) continue;
-        const auto& face = mesh.faces[face_index];
-        const Vec3 a = mesh.vertices[edge.a].p;
-        const Vec3 b = mesh.vertices[edge.b].p;
-        const Vec3 c = mesh.vertices[face.v[0]].p;
-        Vec3 face_normal = (mesh.vertices[face.v[1]].p - c).cross(mesh.vertices[face.v[2]].p - c);
-        if (face_normal.norm() <= 1e-15) continue;
-        face_normal.normalize();
-        Vec3 constraint_normal = (b - a).normalized().cross(face_normal).normalized();
-        const Mat4 boundary = plane_quadric(constraint_normal, a);
-        mesh.vertices[edge.a].memory_quadric += options.boundary_weight * curvature[edge.a] * boundary;
-        mesh.vertices[edge.b].memory_quadric += options.boundary_weight * curvature[edge.b] * boundary;
-    }
-    for (std::size_t vertex = 0; vertex < mesh.vertices.size(); ++vertex) {
-        if (is_attribute_critical(mesh, static_cast<int>(vertex))) {
-            mesh.vertices[vertex].memory_quadric *= options.material_weight;
+    } else {
+        for (const auto& [edge, count] : counts) {
+            if (count != 1) continue;
+            int face_index = -1;
+            for (const int candidate : mesh.vertices[edge.a].faces) {
+                const auto& face = mesh.faces[candidate];
+                if (std::find(face.v.begin(), face.v.end(), edge.b) != face.v.end()) {
+                    face_index = candidate;
+                    break;
+                }
+            }
+            if (face_index < 0) continue;
+            const auto& face = mesh.faces[face_index];
+            const Vec3 a = mesh.vertices[edge.a].p;
+            const Vec3 b = mesh.vertices[edge.b].p;
+            const Vec3 c = mesh.vertices[face.v[0]].p;
+            Vec3 face_normal = (mesh.vertices[face.v[1]].p - c).cross(mesh.vertices[face.v[2]].p - c);
+            if (face_normal.norm() <= 1e-15) continue;
+            face_normal.normalize();
+            Vec3 constraint_normal = (b - a).normalized().cross(face_normal).normalized();
+            const Mat4 boundary = plane_quadric(constraint_normal, a);
+            mesh.vertices[edge.a].memory_quadric += options.boundary_weight * curvature[edge.a] * boundary;
+            mesh.vertices[edge.b].memory_quadric += options.boundary_weight * curvature[edge.b] * boundary;
+        }
+        for (std::size_t vertex = 0; vertex < mesh.vertices.size(); ++vertex) {
+            if (is_attribute_critical(mesh, static_cast<int>(vertex))) {
+                mesh.vertices[vertex].memory_quadric *= options.material_weight;
+            }
         }
     }
 }
@@ -525,6 +636,74 @@ static void build_virtual_edges(Mesh& mesh, double radius) {
     }
 }
 
+static void build_faqem_virtual_edges(Mesh& mesh, double radius_fraction) {
+    DisjointSet components(mesh.vertices.size());
+    for (const auto& face : mesh.faces) {
+        if (!face.active) continue;
+        components.unite(face.v[0], face.v[1]);
+        components.unite(face.v[1], face.v[2]);
+    }
+    std::unordered_set<int> roots;
+    for (std::size_t index = 0; index < mesh.vertices.size(); ++index) {
+        if (mesh.vertices[index].active) roots.insert(components.find(static_cast<int>(index)));
+    }
+    if (roots.size() <= 1) return;
+    const double threshold = std::max(radius_fraction * mesh.bbox_diagonal, 1e-30);
+    const double threshold_squared = threshold * threshold;
+    std::unordered_map<std::string, std::vector<int>> buckets;
+    std::vector<Vec3> centroids(mesh.faces.size(), Vec3::Zero());
+    for (std::size_t face_index = 0; face_index < mesh.faces.size(); ++face_index) {
+        const Face& face = mesh.faces[face_index];
+        if (!face.active) continue;
+        centroids[face_index] =
+            (mesh.vertices[face.v[0]].p + mesh.vertices[face.v[1]].p + mesh.vertices[face.v[2]].p) / 3.0;
+        const Eigen::Vector3i cell = (centroids[face_index] / threshold).array().floor().cast<int>();
+        buckets[grid_key(cell)].push_back(static_cast<int>(face_index));
+    }
+    std::unordered_set<std::uint64_t> tested_pairs;
+    for (std::size_t first_index = 0; first_index < mesh.faces.size(); ++first_index) {
+        const Face& first = mesh.faces[first_index];
+        if (!first.active) continue;
+        const Eigen::Vector3i cell = (centroids[first_index] / threshold).array().floor().cast<int>();
+        for (int x = -1; x <= 1; ++x) {
+            for (int y = -1; y <= 1; ++y) {
+                for (int z = -1; z <= 1; ++z) {
+                    const auto iterator = buckets.find(grid_key(cell + Eigen::Vector3i(x, y, z)));
+                    if (iterator == buckets.end()) continue;
+                    for (const int raw_second : iterator->second) {
+                        const int first_id = static_cast<int>(first_index);
+                        if (raw_second <= first_id) continue;
+                        const int pair_first = first_id;
+                        const int pair_second = raw_second;
+                        const std::uint64_t pair_key =
+                            (static_cast<std::uint64_t>(static_cast<std::uint32_t>(pair_first)) << 32U) |
+                            static_cast<std::uint32_t>(pair_second);
+                        if (!tested_pairs.insert(pair_key).second) continue;
+                        const Face& second = mesh.faces[pair_second];
+                        if (components.find(first.v[0]) == components.find(second.v[0])) continue;
+                        if ((centroids[first_index] - centroids[pair_second]).squaredNorm() > threshold_squared) {
+                            continue;
+                        }
+                        Edge closest(first.v[0], second.v[0]);
+                        double closest_squared = std::numeric_limits<double>::infinity();
+                        for (const int vertex_a : first.v) {
+                            for (const int vertex_b : second.v) {
+                                const double squared =
+                                    (mesh.vertices[vertex_a].p - mesh.vertices[vertex_b].p).squaredNorm();
+                                if (squared < closest_squared) {
+                                    closest_squared = squared;
+                                    closest = Edge(vertex_a, vertex_b);
+                                }
+                            }
+                        }
+                        mesh.virtual_edges.insert(closest);
+                    }
+                }
+            }
+        }
+    }
+}
+
 static double evaluate(const Mat4& quadric, const Vec3& position) {
     Vec4 homogeneous;
     homogeneous << position, 1.0;
@@ -590,6 +769,33 @@ static Mat4 memoryless_area_quadric(const Mesh& mesh, int a, int b) {
     return result;
 }
 
+static Mat4 faqem_area_quadric(const Mesh& mesh, int a, int b) {
+    std::unordered_set<Edge, EdgeHash> boundary_edges;
+    for (const int endpoint : {a, b}) {
+        for (const int face_index : mesh.vertices[endpoint].faces) {
+            const Face& face = mesh.faces[face_index];
+            if (!face.active) continue;
+            for (int corner = 0; corner < 3; ++corner) {
+                const Edge edge(face.v[corner], face.v[(corner + 1) % 3]);
+                if (edge.a != endpoint && edge.b != endpoint) continue;
+                if (active_edge_incidence(mesh, edge.a, edge.b) == 1) boundary_edges.insert(edge);
+            }
+        }
+    }
+    Mat4 result = Mat4::Zero();
+    for (const Edge& edge : boundary_edges) {
+        const Vec3& vr = mesh.vertices[edge.a].p;
+        const Vec3& vs = mesh.vertices[edge.b].p;
+        const Vec3 edge_vector = vs - vr;
+        const Vec3 triangle_vector = vr.cross(vs);
+        Eigen::Matrix<double, 3, 4> expression;
+        expression.leftCols<3>() = cross_matrix(edge_vector);
+        expression.col(3) = triangle_vector;
+        result += 0.5 * expression.transpose() * expression;
+    }
+    return result;
+}
+
 static Candidate candidate_for(const Mesh& mesh, int a, int b, const Options& options) {
     const Vertex& first = mesh.vertices[a];
     const Vertex& second = mesh.vertices[b];
@@ -605,7 +811,15 @@ static Candidate candidate_for(const Mesh& mesh, int a, int b, const Options& op
     } else {
         position = optimal_position(quadric, first.p, second.p);
     }
-    const double cost = std::max(0.0, evaluate(quadric, position));
+    double cost = std::max(0.0, evaluate(quadric, position));
+    if (options.method == "fa-qem") {
+        const double edge_tolerance = 1e-8 * mesh.bbox_diagonal;
+        if ((first.p - second.p).norm() < edge_tolerance) {
+            cost = std::numeric_limits<double>::infinity();
+        } else {
+            cost += options.area_weight * std::max(0.0, evaluate(faqem_area_quadric(mesh, a, b), position));
+        }
+    }
     return {cost, a, b, first.revision, second.revision, position, target_endpoint};
 }
 
@@ -613,8 +827,11 @@ static bool edge_exists(const Mesh& mesh, int a, int b) {
     return mesh.vertices[a].neighbors.contains(b) || mesh.virtual_edges.contains(Edge(a, b));
 }
 
-static bool collapse_valid(const Mesh& mesh, const Candidate& candidate) {
-    if (mesh.vertices[candidate.a].complex_boundary || mesh.vertices[candidate.b].complex_boundary) return false;
+static bool collapse_valid(const Mesh& mesh, const Candidate& candidate, const Options& options) {
+    if (options.method == "qem4vr" &&
+        (mesh.vertices[candidate.a].complex_boundary || mesh.vertices[candidate.b].complex_boundary)) {
+        return false;
+    }
     const bool physical_edge = mesh.vertices[candidate.a].neighbors.contains(candidate.b);
     if (physical_edge) {
         std::unordered_set<int> common;
@@ -934,8 +1151,11 @@ static void write_obj(const Mesh& mesh, const fs::path& path) {
 
 static void simplify(Mesh& mesh, const Options& options) {
     rebuild_connectivity(mesh);
+    update_bbox_diagonal(mesh);
     initialize_quadrics(mesh, options);
     if (options.method == "stmw") build_virtual_edges(mesh, options.virtual_radius);
+    if (options.method == "fa-qem") build_faqem_virtual_edges(mesh, options.virtual_radius);
+    const std::size_t initial_virtual_edges = mesh.virtual_edges.size();
     std::priority_queue<Candidate, std::vector<Candidate>, std::greater<>> queue;
     auto enqueue = [&](int a, int b) {
         if (a == b || !mesh.vertices[a].active || !mesh.vertices[b].active) return;
@@ -963,7 +1183,7 @@ static void simplify(Mesh& mesh, const Options& options) {
             continue;
         }
         if (!edge_exists(mesh, current.a, current.b)) continue;
-        if (!collapse_valid(mesh, current)) {
+        if (!collapse_valid(mesh, current, options)) {
             ++rejected;
             continue;
         }
@@ -988,15 +1208,17 @@ static void simplify(Mesh& mesh, const Options& options) {
     }
     std::cerr << "complete method=" << options.method << " faces=" << mesh.active_faces
               << " collapses=" << collapses << " rejected=" << rejected
-              << " virtual_edges=" << mesh.virtual_edges.size() << '\n';
+              << " virtual_edges=" << mesh.virtual_edges.size()
+              << " initial_virtual_edges=" << initial_virtual_edges << '\n';
     if (!options.successive_map.empty()) write_successive_map(mesh, history, options.successive_map);
 }
 
 static Options parse_options(int argc, char** argv) {
     if (argc == 2 && std::string(argv[1]) == "--help") {
-        std::cout << "paper_simplify --method qem4vr|stmw --input mesh.obj --output result.obj "
+        std::cout << "paper_simplify --method qem4vr|stmw|fa-qem --input mesh.obj --output result.obj "
                      "--target-faces N [--checkpoint-dir DIR] [--virtual-radius R] "
-                     "[--successive-map FILE]\n";
+                     "[--successive-map FILE] [--area-weight W] [--boundary-weight W] "
+                     "[--uv-weight W] [--normal-weight W] [--plane-area-weight W]\n";
         std::exit(0);
     }
     Options options;
@@ -1013,16 +1235,25 @@ static Options parse_options(int argc, char** argv) {
         else if (key == "--virtual-radius") options.virtual_radius = std::stod(value);
         else if (key == "--boundary-weight") options.boundary_weight = std::stod(value);
         else if (key == "--material-weight") options.material_weight = std::stod(value);
+        else if (key == "--area-weight") options.area_weight = std::stod(value);
+        else if (key == "--uv-weight") options.uv_weight = std::stod(value);
+        else if (key == "--normal-weight") options.normal_weight = std::stod(value);
+        else if (key == "--plane-area-weight") options.plane_area_weight = std::stod(value);
         else throw std::runtime_error("unknown option: " + key);
     }
-    if (options.method != "qem4vr" && options.method != "stmw") {
-        throw std::runtime_error("--method must be qem4vr or stmw");
+    if (options.method != "qem4vr" && options.method != "stmw" && options.method != "fa-qem") {
+        throw std::runtime_error("--method must be qem4vr, stmw, or fa-qem");
     }
     if (options.input.empty() || options.output.empty() || options.target_faces == 0) {
         throw std::runtime_error("--input, --output, and --target-faces are required");
     }
-    if (options.method != "stmw" && !options.successive_map.empty()) {
-        throw std::runtime_error("--successive-map is only valid with --method stmw");
+    if (options.method != "stmw" && options.method != "fa-qem" && !options.successive_map.empty()) {
+        throw std::runtime_error("--successive-map is only valid with --method stmw or fa-qem");
+    }
+    if (!(options.plane_area_weight > 0.0)) throw std::runtime_error("--plane-area-weight must be positive");
+    if (options.area_weight < 0.0 || options.boundary_weight < 0.0 || options.uv_weight < 0.0 ||
+        options.normal_weight < 0.0) {
+        throw std::runtime_error("FA-QEM weights must be non-negative");
     }
     return options;
 }
@@ -1032,6 +1263,7 @@ int main(int argc, char** argv) {
         const Options options = parse_options(argc, argv);
         Mesh mesh = load_obj(options.input);
         if (options.method == "qem4vr") weld_duplicate_positions(mesh);
+        if (options.method == "fa-qem") weld_close_positions(mesh, 1e-6);
         if (options.target_faces >= mesh.faces.size()) throw std::runtime_error("target must be below input face count");
         simplify(mesh, options);
         write_obj(mesh, options.output);

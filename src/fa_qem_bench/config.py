@@ -9,6 +9,8 @@ import yaml
 from .util import sha256_file
 
 SUPPORTED_METHODS = ("qem", "qem4vr", "robustlpm", "ice", "stmw", "cwf")
+TARGET_METHODS = ("fa-qem",)
+RUNNABLE_METHODS = (*SUPPORTED_METHODS, *TARGET_METHODS)
 SUPPORTED_TRACKS = ("research", "asset")
 
 

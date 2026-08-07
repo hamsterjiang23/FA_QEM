@@ -57,4 +57,33 @@ if(BUILD_TESTING)
     set_tests_properties(qem4vr_welds_uv_seams PROPERTIES
         PASS_REGULAR_EXPRESSION "faces=4"
     )
+    add_test(
+        NAME faqem_composite_quadric_smoke
+        COMMAND paper_simplify
+            --method fa-qem
+            --input ${CMAKE_SOURCE_DIR}/tests/fixtures/qem4vr_uv_seam.obj
+            --output ${CMAKE_BINARY_DIR}/faqem-uv-seam.obj
+            --target-faces 4
+            --successive-map ${CMAKE_BINARY_DIR}/faqem-uv-seam-map.bin
+            --area-weight 100
+            --boundary-weight 500
+            --uv-weight 5000
+            --normal-weight 0.01
+            --plane-area-weight 1
+    )
+    set_tests_properties(faqem_composite_quadric_smoke PROPERTIES
+        PASS_REGULAR_EXPRESSION "method=fa-qem faces=4"
+    )
+    add_test(
+        NAME faqem_centroid_virtual_edge
+        COMMAND paper_simplify
+            --method fa-qem
+            --input ${CMAKE_SOURCE_DIR}/tests/fixtures/disconnected_triangles.obj
+            --output ${CMAKE_BINARY_DIR}/faqem-disconnected.obj
+            --target-faces 1
+            --virtual-radius 0.01
+    )
+    set_tests_properties(faqem_centroid_virtual_edge PROPERTIES
+        PASS_REGULAR_EXPRESSION "initial_virtual_edges=1"
+    )
 endif()

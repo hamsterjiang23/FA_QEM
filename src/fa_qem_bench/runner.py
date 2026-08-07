@@ -26,7 +26,7 @@ def run_baseline(config: ExperimentConfig, method: str, ratio: str) -> RunRecord
     record_path = run_dir / "run.json"
     adapter = adapter_for(method)
     available, detail = adapter.available(config.root)
-    prepared_name = "attribute_unit.obj" if method in {"qem4vr", "robustlpm"} else "geometry_unit.obj"
+    prepared_name = "attribute_unit.obj" if method in {"qem4vr", "robustlpm", "fa-qem"} else "geometry_unit.obj"
     prepared_path = config.artifacts / "prepared" / prepared_name
     record = RunRecord(
         schema_version=1,

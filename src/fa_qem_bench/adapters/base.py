@@ -184,7 +184,7 @@ class PaperExecutableAdapter(ExecutableAdapter):
         ]
         parameters = dict(context.parameters)
         successive_map = context.run_dir / "successive-map.bin"
-        if self.name == "stmw":
+        if self.name in {"stmw", "fa-qem"}:
             command.extend(
                 [
                     "--virtual-radius",
@@ -194,6 +194,32 @@ class PaperExecutableAdapter(ExecutableAdapter):
                 ]
             )
             parameters["virtual_radius_unit_diagonal"] = 0.01
+            if self.name == "fa-qem":
+                command.extend(
+                    [
+                        "--area-weight",
+                        "100",
+                        "--boundary-weight",
+                        "500",
+                        "--uv-weight",
+                        "5000",
+                        "--normal-weight",
+                        "0.01",
+                        "--plane-area-weight",
+                        "1",
+                    ]
+                )
+                parameters.update(
+                    {
+                        "area_weight": 100.0,
+                        "boundary_weight": 500.0,
+                        "uv_seam_weight": 5000.0,
+                        "normal_weight": 0.01,
+                        "plane_area_weight": 1.0,
+                        "weld_absolute_tolerance": 1e-6,
+                        "minimum_edge_relative_diagonal": 1e-8,
+                    }
+                )
         elif self.name == "qem4vr":
             command.extend(["--boundary-weight", "5", "--material-weight", "1000"])
             parameters.update(
@@ -215,9 +241,9 @@ class PaperExecutableAdapter(ExecutableAdapter):
         if failed is not None:
             raise RuntimeError(f"{self.name} exited with {failed.returncode}")
         measured = results[-1]
-        if self.name == "stmw":
+        if self.name in {"stmw", "fa-qem"}:
             if not successive_map.is_file():
-                raise RuntimeError("STMW did not produce its successive mapping history")
+                raise RuntimeError(f"{self.name} did not produce its successive mapping history")
             parameters.update(
                 {
                     "successive_mapping_path": str(successive_map.relative_to(context.root)),
@@ -241,6 +267,11 @@ class QEM4VRAdapter(PaperExecutableAdapter):
 class STMWAdapter(PaperExecutableAdapter):
     name = "stmw"
     source = "paper-guided local reimplementation; radius assumption disclosed"
+
+
+class FAQEMAdapter(PaperExecutableAdapter):
+    name = "fa-qem"
+    source = "paper-guided local reimplementation; author repository contains no implementation"
 
 
 class ExternalTemplateAdapter(ExecutableAdapter):
@@ -549,6 +580,7 @@ def adapter_for(name: str) -> BaselineAdapter:
         "ice": ICEAdapter(),
         "stmw": STMWAdapter(),
         "cwf": CWFAdapter(),
+        "fa-qem": FAQEMAdapter(),
     }
     try:
         return adapters[name]

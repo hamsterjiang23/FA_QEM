@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from .audit import audit_experiment
-from .config import SUPPORTED_METHODS, load_config
+from .config import RUNNABLE_METHODS, SUPPORTED_METHODS, load_config
 from .doctor import doctor
 from .evaluate import evaluate_run
 from .mesh import prepare_source
@@ -24,7 +24,7 @@ def _parser() -> argparse.ArgumentParser:
     subparsers.add_parser("doctor")
     subparsers.add_parser("prepare")
     run = subparsers.add_parser("run")
-    run.add_argument("--method", required=True, choices=SUPPORTED_METHODS)
+    run.add_argument("--method", required=True, choices=RUNNABLE_METHODS)
     run.add_argument("--ratio", required=True, choices=("0.5", "0.1", "0.01"))
     repair = subparsers.add_parser("repair")
     repair.add_argument("--run-id", required=True)

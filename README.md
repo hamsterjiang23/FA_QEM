@@ -15,11 +15,14 @@ uv sync --extra dev
 uv run fa-qem-bench --config experiment.yaml doctor
 uv run fa-qem-bench --config experiment.yaml prepare
 uv run fa-qem-bench --config experiment.yaml run --method qem --ratio 0.5
+uv run fa-qem-bench --config experiment.yaml run --method fa-qem --ratio 0.5
 uv run fa-qem-bench --config experiment.yaml sweep --resume --resolution 2048
 uv run fa-qem-bench --config experiment.yaml audit
 uv run python scripts/validate_qem_consistency.py
 uv run pytest
 ```
+
+`fa-qem` is the evaluated target method and is intentionally excluded from the fixed six-baseline sweep/audit count. Its paper-to-code mapping and disclosed assumptions are documented in [docs/fa-qem-implementation-spec.md](docs/fa-qem-implementation-spec.md).
 
 The `sweep` command executes each source ratio independently, evaluates the
 research output, creates an explicit asset-track result even when the research

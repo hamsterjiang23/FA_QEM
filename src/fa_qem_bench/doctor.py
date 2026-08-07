@@ -7,7 +7,7 @@ from typing import Any
 import psutil
 
 from .adapters import adapter_for
-from .config import SUPPORTED_METHODS, ExperimentConfig
+from .config import RUNNABLE_METHODS, ExperimentConfig
 from .util import command_version, environment_snapshot, sha256_file
 
 
@@ -27,7 +27,7 @@ def doctor(config: ExperimentConfig) -> dict[str, Any]:
         )
     }
     methods = {}
-    for method in SUPPORTED_METHODS:
+    for method in RUNNABLE_METHODS:
         available, detail = adapter_for(method).available(config.root)
         methods[method] = {"available": available, "detail": detail}
     return {

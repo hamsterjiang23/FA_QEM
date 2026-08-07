@@ -3,6 +3,8 @@
 ## Deviations
 
 - `codegraph init -i` exceeded the 120-second foreground timeout, but left a live indexing process and a populated `.codegraph` database. The process is being left to finish rather than terminated; health will be checked before using the index.
+- The accepted baseline-only scope excluded FA-QEM itself; the user later explicitly required the target method. FA-QEM is now a separately runnable target so the fixed 36-result baseline audit remains unchanged.
+- The paper's reverse nearest-parent texture heuristic lacks enough published state/format detail for the existing surface-sample baker. The target records the same full local collapse lineage as STMW and uses the audited one-ring projection baker; geometry costs and collapse decisions remain paper-specific.
 
 ## Discovered edge cases
 
@@ -43,7 +45,17 @@
 - Research-track texture cells were initially blank because texture sampling is intentionally disabled before the common asset rebake. Evaluation and reports now store an explicit `N/A` status and reason instead of relying on an empty numeric field.
 - CWF was initially hard-coded to a single measured run at every ratio. Its first execution is now a runtime classification probe: runs at or above the one-hour threshold remain single-shot, while faster ratios treat the probe as the warmup and collect three fresh measured repetitions.
 - Final acceptance is machine-checked by the `audit` command across all 36 expected records: source/output hashes, target status, required metrics, timing repetitions, repair lineage, 2048 rebake, texture evaluation, and external hard gates. Missing self-intersection backends remain warnings rather than fabricated zeros.
+- FA-QEM publishes `w_uv` as a multiplicative seam-vertex penalty without specifying the multiplication point. The reproduction multiplies the complete initialized per-vertex geometric-feature quadric and exposes the choice in the implementation specification and run parameters.
+- FA-QEM names a unit vertex normal but does not specify its estimator. The reproduction uses the normalized sum of incident unnormalized face cross products (area weighting), computed once on the original welded mesh.
 
 ## Questions for review
 
 - None.
+
+## Session summary
+
+- Deviations count: 3 recorded, including the user-requested expansion from baseline-only evaluation to a separately runnable FA-QEM target.
+- Most likely to revisit: replace the one-ring projection appearance adapter with the paper's nearest-parent heuristic if the authors publish code or missing state details.
+- Edge cases found: underspecified UV multiplication point, unspecified vertex-normal estimator, and unordered boundary-neighbor orientation.
+- Verification completed: native build/CTest, Python tests/lint/type checks, baseline audit isolation, and a real-model 50% topology smoke.
+- Next session should read first: `docs/fa-qem-implementation-spec.md`, then the FA-QEM entries in this file.

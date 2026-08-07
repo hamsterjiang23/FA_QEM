@@ -205,7 +205,7 @@ def bake_pbr_asset(
             raise ValueError("successive map references a face outside the source mesh")
         source_triangles = np.asarray(source.triangles)[source_face_ids]
         closest = trimesh.triangles.closest_point(source_triangles, target_points)
-        mapping_audit["mode"] = "stmw_successive_one_ring_projection"
+        mapping_audit["mode"] = "successive_one_ring_projection"
         mapping_audit["history_path"] = str(successive_map_path)
         mapping_audit["history_sha256"] = sha256_file(successive_map_path)
     else:
@@ -294,7 +294,7 @@ def rebake_run(config: ExperimentConfig, asset_run_id: str, resolution: int = 20
     output = config.artifacts / "runs" / asset_run_id / "asset-pbr.glb"
     successive_map_path: Path | None = None
     research_run_id = str(record.get("parameters", {}).get("research_run_id", ""))
-    if record.get("method") == "stmw" and research_run_id:
+    if record.get("method") in {"stmw", "fa-qem"} and research_run_id:
         research = load_run_record(config.artifacts / "runs" / research_run_id / "run.json")
         mapping_relative = research.get("parameters", {}).get("successive_mapping_path")
         expected_hash = research.get("parameters", {}).get("successive_mapping_sha256")
@@ -302,7 +302,7 @@ def rebake_run(config: ExperimentConfig, asset_run_id: str, resolution: int = 20
         if mapping_relative and lineage_action == "not_required":
             candidate = config.root / str(mapping_relative)
             if sha256_file(candidate) != expected_hash:
-                raise ValueError("STMW successive mapping history hash mismatch")
+                raise ValueError(f"{record.get('method')} successive mapping history hash mismatch")
             successive_map_path = candidate
     metrics = bake_pbr_asset(
         config.source,
