@@ -43,7 +43,7 @@ Only boundary edges incident to either collapse endpoint contribute to $Q^A$, ma
 | `--plane-area-weight` | 1 |
 | `--virtual-radius` | 0.01 of the bounding-box diagonal |
 
-The loader welds positions within the paper's absolute $10^{-6}$ tolerance. Edges shorter than $10^{-8}$ times the bounding-box diagonal receive infinite cost. Candidate collapses are rejected when they create a degenerate triangle, duplicate a face, violate the link condition, or flip an affected face normal.
+The loader welds positions within the paper's absolute $10^{-6}$ tolerance. Edges shorter than $10^{-8}$ times the bounding-box diagonal receive infinite cost. Candidate collapses are rejected when they create a zero-area triangle or make an affected face normal dot product negative. This follows Algorithm 1 and Sec. 3.3's flip-only veto for FA-QEM's generalized non-manifold adjacency. For an input that is manifold after welding, including connected vertex links and valid boundary fans, the implementation additionally retains the link-condition and duplicate-face checks so a manifold source cannot become non-manifold during simplification. Inputs with non-manifold edges or vertices use the paper's generalized flip-only path. This conditional safeguard is an implementation assumption added after the local 10% regression produced 11 non-manifold edges without it.
 
 Disconnected components are identified from generalized vertex adjacency. Triangle centroids are queried within $0.01L_{diag}$; the closest vertex pair for each qualifying cross-component triangle pair becomes a virtual collapse edge. Collapse history is serialized for the common successive-mapping baker.
 

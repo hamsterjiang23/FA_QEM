@@ -218,6 +218,10 @@ class PaperExecutableAdapter(ExecutableAdapter):
                         "plane_area_weight": 1.0,
                         "weld_absolute_tolerance": 1e-6,
                         "minimum_edge_relative_diagonal": 1e-8,
+                        "collapse_validation": (
+                            "paper flip-only veto plus zero-area safeguard; "
+                            "link condition retained when the welded input is initially manifold"
+                        ),
                     }
                 )
         elif self.name == "qem4vr":

@@ -72,7 +72,7 @@ if(BUILD_TESTING)
             --plane-area-weight 1
     )
     set_tests_properties(faqem_composite_quadric_smoke PROPERTIES
-        PASS_REGULAR_EXPRESSION "method=fa-qem faces=4"
+        PASS_REGULAR_EXPRESSION "method=fa-qem faces=4.*link_condition=initial-manifold"
     )
     add_test(
         NAME faqem_centroid_virtual_edge
@@ -84,6 +84,17 @@ if(BUILD_TESTING)
             --virtual-radius 0.01
     )
     set_tests_properties(faqem_centroid_virtual_edge PROPERTIES
-        PASS_REGULAR_EXPRESSION "initial_virtual_edges=1"
+        PASS_REGULAR_EXPRESSION "initial_virtual_edges=1.*link_condition=initial-manifold"
+    )
+    add_test(
+        NAME faqem_nonmanifold_uses_generalized_validation
+        COMMAND paper_simplify
+            --method fa-qem
+            --input ${CMAKE_SOURCE_DIR}/tests/fixtures/nonmanifold_edge.obj
+            --output ${CMAKE_BINARY_DIR}/faqem-nonmanifold.obj
+            --target-faces 2
+    )
+    set_tests_properties(faqem_nonmanifold_uses_generalized_validation PROPERTIES
+        PASS_REGULAR_EXPRESSION "link_condition=generalized"
     )
 endif()

@@ -57,8 +57,17 @@ def _sample(mesh: trimesh.Trimesh, count: int, seed: int) -> np.ndarray:
 
 
 def _closest_distances(mesh: trimesh.Trimesh, points: np.ndarray) -> np.ndarray:
-    _, distances, _ = trimesh.proximity.closest_point(mesh, points)
-    return np.asarray(distances, dtype=np.float64)
+    def query(chunk: np.ndarray) -> np.ndarray:
+        try:
+            _, distances, _ = trimesh.proximity.closest_point(mesh, chunk)
+            return np.asarray(distances, dtype=np.float64)
+        except MemoryError:
+            if len(chunk) <= 64:
+                raise
+            midpoint = len(chunk) // 2
+            return np.concatenate((query(chunk[:midpoint]), query(chunk[midpoint:])))
+
+    return np.concatenate([query(points[start : start + 2048]) for start in range(0, len(points), 2048)])
 
 
 def geometry_metrics(reference: trimesh.Trimesh, result: trimesh.Trimesh, count: int, seed: int) -> dict[str, float]:

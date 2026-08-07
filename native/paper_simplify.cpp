@@ -66,6 +66,7 @@ struct Mesh {
     std::unordered_set<Edge, EdgeHash> virtual_edges;
     std::size_t active_faces{};
     double bbox_diagonal{1.0};
+    bool enforce_manifold_link_condition{false};
 };
 
 struct FaceSnapshot {
@@ -737,6 +738,47 @@ static int active_edge_incidence(const Mesh& mesh, int a, int b) {
     return count;
 }
 
+static bool initially_manifold(const Mesh& mesh) {
+    for (std::size_t vertex_index = 0; vertex_index < mesh.vertices.size(); ++vertex_index) {
+        const Vertex& vertex = mesh.vertices[vertex_index];
+        if (!vertex.active || vertex.faces.empty()) continue;
+        std::unordered_map<int, std::unordered_set<int>> link;
+        for (const int face_index : vertex.faces) {
+            const Face& face = mesh.faces[face_index];
+            if (!face.active) continue;
+            std::array<int, 2> other{};
+            int count = 0;
+            for (const int item : face.v) {
+                if (item != static_cast<int>(vertex_index) && count < 2) other[count++] = item;
+            }
+            if (count != 2 || other[0] == other[1]) return false;
+            link[other[0]].insert(other[1]);
+            link[other[1]].insert(other[0]);
+        }
+        if (link.empty()) continue;
+        std::size_t degree_one = 0;
+        for (const auto& [neighbor, adjacent] : link) {
+            (void)neighbor;
+            if (adjacent.size() == 1) {
+                ++degree_one;
+            } else if (adjacent.size() != 2) {
+                return false;
+            }
+        }
+        if (degree_one != 0 && degree_one != 2) return false;
+        std::unordered_set<int> visited;
+        std::vector<int> pending{link.begin()->first};
+        while (!pending.empty()) {
+            const int current = pending.back();
+            pending.pop_back();
+            if (!visited.insert(current).second) continue;
+            for (const int adjacent : link.at(current)) pending.push_back(adjacent);
+        }
+        if (visited.size() != link.size()) return false;
+    }
+    return true;
+}
+
 static Eigen::Matrix3d cross_matrix(const Vec3& vector) {
     Eigen::Matrix3d matrix;
     matrix << 0.0, -vector.z(), vector.y(), vector.z(), 0.0, -vector.x(), -vector.y(), vector.x(), 0.0;
@@ -833,7 +875,9 @@ static bool collapse_valid(const Mesh& mesh, const Candidate& candidate, const O
         return false;
     }
     const bool physical_edge = mesh.vertices[candidate.a].neighbors.contains(candidate.b);
-    if (physical_edge) {
+    const bool enforce_link_condition =
+        options.method != "fa-qem" || mesh.enforce_manifold_link_condition;
+    if (physical_edge && enforce_link_condition) {
         std::unordered_set<int> common;
         for (const int neighbor : mesh.vertices[candidate.a].neighbors) {
             if (mesh.vertices[candidate.b].neighbors.contains(neighbor)) common.insert(neighbor);
@@ -872,11 +916,15 @@ static bool collapse_valid(const Mesh& mesh, const Candidate& candidate, const O
         std::sort(mapped.begin(), mapped.end());
         const std::string face_key = std::to_string(mapped[0]) + ":" + std::to_string(mapped[1]) + ":" +
                                      std::to_string(mapped[2]);
-        if (!mapped_faces.insert(face_key).second) return false;
+        if (enforce_link_condition && !mapped_faces.insert(face_key).second) return false;
         const Vec3 old_normal = (before[1] - before[0]).cross(before[2] - before[0]);
         const Vec3 new_normal = (after[1] - after[0]).cross(after[2] - after[0]);
         if (new_normal.squaredNorm() <= 1e-24) return false;
-        if (old_normal.dot(new_normal) <= 1e-12 * old_normal.norm() * new_normal.norm()) return false;
+        if (options.method == "fa-qem") {
+            if (old_normal.dot(new_normal) < 0.0) return false;
+        } else if (old_normal.dot(new_normal) <= 1e-12 * old_normal.norm() * new_normal.norm()) {
+            return false;
+        }
     }
     return true;
 }
@@ -1151,6 +1199,7 @@ static void write_obj(const Mesh& mesh, const fs::path& path) {
 
 static void simplify(Mesh& mesh, const Options& options) {
     rebuild_connectivity(mesh);
+    mesh.enforce_manifold_link_condition = options.method == "fa-qem" && initially_manifold(mesh);
     update_bbox_diagonal(mesh);
     initialize_quadrics(mesh, options);
     if (options.method == "stmw") build_virtual_edges(mesh, options.virtual_radius);
@@ -1209,7 +1258,9 @@ static void simplify(Mesh& mesh, const Options& options) {
     std::cerr << "complete method=" << options.method << " faces=" << mesh.active_faces
               << " collapses=" << collapses << " rejected=" << rejected
               << " virtual_edges=" << mesh.virtual_edges.size()
-              << " initial_virtual_edges=" << initial_virtual_edges << '\n';
+              << " initial_virtual_edges=" << initial_virtual_edges
+              << " link_condition="
+              << (mesh.enforce_manifold_link_condition ? "initial-manifold" : "generalized") << '\n';
     if (!options.successive_map.empty()) write_successive_map(mesh, history, options.successive_map);
 }
 

@@ -87,7 +87,14 @@ def run_measured_wsl(command: list[str], cwd: Path, log_dir: Path, timeout: floa
         raise ValueError("WSL measurement requires a wsl.exe command")
     timed_command = [command[0], "/usr/bin/time", "-v", *command[1:]]
     measured = run_measured(timed_command, cwd, log_dir, timeout)
-    cpu_seconds, peak_rss_bytes = _gnu_time_metrics(measured.stderr_path.read_text(encoding="utf-8", errors="replace"))
+    try:
+        cpu_seconds, peak_rss_bytes = _gnu_time_metrics(
+            measured.stderr_path.read_text(encoding="utf-8", errors="replace")
+        )
+    except ValueError:
+        if measured.returncode != 0:
+            return measured
+        raise
     return ProcessResult(
         command=timed_command,
         returncode=measured.returncode,

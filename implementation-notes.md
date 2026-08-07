@@ -47,6 +47,9 @@
 - Final acceptance is machine-checked by the `audit` command across all 36 expected records: source/output hashes, target status, required metrics, timing repetitions, repair lineage, 2048 rebake, texture evaluation, and external hard gates. Missing self-intersection backends remain warnings rather than fabricated zeros.
 - FA-QEM publishes `w_uv` as a multiplicative seam-vertex penalty without specifying the multiplication point. The reproduction multiplies the complete initialized per-vertex geometric-feature quadric and exposes the choice in the implementation specification and run parameters.
 - FA-QEM names a unit vertex normal but does not specify its estimator. The reproduction uses the normalized sum of incident unnormalized face cross products (area weighting), computed once on the original welded mesh.
+- FA-QEM identifies Thingi10K as its geometry benchmark but does not publish the exact model IDs or enough metric scaling detail to reconstruct Table 2 model-for-model. The reproduction therefore fixes a hash-ranked, topology-stratified validation/holdout subset and reports it as an independent dataset test rather than an exact Table 2 reproduction.
+- The individual Thingiverse S3 links retained in the official Thingi10K metadata currently return HTTP 403. An official pre-consolidation Hugging Face commit still exposes individual NPZ files, so the fixed 16-model subset is fetched from that commit instead of transferring the 4.08 GB archive. Data/metadata commits, downloaded hashes, per-model licenses, and deterministic splits are recorded in the manifest.
+- The first Thingi10K validation pass exposed that the reproduction's generic collapse validator was stricter than FA-QEM Algorithm 1: it imposed a link condition, rejected duplicate affected faces, and treated near-orthogonal normals as flips. FA-QEM now follows the paper's negative-dot-product flip veto (with a zero-area safeguard) while QEM4VR/STMW retain their prior strict topology checks. The pre-fix validation artifacts remain under the `published` variant for direct comparison.
 
 ## Questions for review
 
@@ -59,3 +62,9 @@
 - Edge cases found: underspecified UV multiplication point, unspecified vertex-normal estimator, and unordered boundary-neighbor orientation.
 - Verification completed: native build/CTest, Python tests/lint/type checks, baseline audit isolation, and a real-model 50% topology smoke.
 - Next session should read first: `docs/fa-qem-implementation-spec.md`, then the FA-QEM entries in this file.
+# 2026-08-07 — Adaptive topology validation after local-model regression
+
+- The paper-topology FA-QEM run reached the local 10% target but introduced 11 non-manifold edges.
+- Kept the paper's generalized flip-only validation for inputs that already contain edges of incidence greater than two.
+- Restored link-condition and duplicate-face checks when the welded source is initially edge-manifold, preserving manifold inputs without blocking the non-manifold Thingi10K case that motivated the earlier adjustment.
+- Added native test coverage for both validation modes.

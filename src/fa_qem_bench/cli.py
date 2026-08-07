@@ -15,6 +15,7 @@ from .resources import recover_wsl_resources
 from .runner import run_baseline
 from .sweep import run_sweep
 from .texture import rebake_run
+from .thingi10k import fetch_thingi10k_subset, run_thingi10k_subset, write_thingi10k_manifest
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -47,6 +48,23 @@ def _parser() -> argparse.ArgumentParser:
     audit = subparsers.add_parser("audit")
     audit.add_argument("--allow-incomplete", action="store_true")
     subparsers.add_parser("report")
+    thingi_select = subparsers.add_parser("thingi10k-select")
+    thingi_select.add_argument("--metadata-dir", type=Path, required=True)
+    thingi_select.add_argument("--dataset-root", type=Path, required=True)
+    thingi_select.add_argument("--output", type=Path, required=True)
+    thingi_select.add_argument("--per-split-per-stratum", type=int, default=2)
+    thingi_fetch = subparsers.add_parser("thingi10k-fetch")
+    thingi_fetch.add_argument("--manifest", type=Path, required=True)
+    thingi_run = subparsers.add_parser("thingi10k-run")
+    thingi_run.add_argument("--manifest", type=Path, required=True)
+    thingi_run.add_argument("--split", choices=("validation", "holdout"), required=True)
+    thingi_run.add_argument("--ratios", nargs="+", type=float, choices=(0.1, 0.01), default=[0.1, 0.01])
+    thingi_run.add_argument("--samples", type=int, default=100_000)
+    thingi_run.add_argument(
+        "--variant",
+        choices=("published", "paper-topology", "adaptive-topology", "final-topology"),
+        default="published",
+    )
     return parser
 
 
@@ -103,6 +121,31 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if complete_enough else 1
     if args.command == "report":
         print(build_report(config))
+        return 0
+    if args.command == "thingi10k-select":
+        manifest = write_thingi10k_manifest(
+            args.metadata_dir,
+            args.dataset_root,
+            args.output,
+            seed=config.seed,
+            per_split_per_stratum=args.per_split_per_stratum,
+        )
+        print(json.dumps(manifest, indent=2))
+        return 0
+    if args.command == "thingi10k-run":
+        result = run_thingi10k_subset(
+            config.root,
+            args.manifest,
+            split=args.split,
+            ratios=tuple(args.ratios),
+            samples=args.samples,
+            seed=config.seed,
+            variant=args.variant,
+        )
+        print(json.dumps(result["summary"], indent=2))
+        return 0
+    if args.command == "thingi10k-fetch":
+        print(json.dumps(fetch_thingi10k_subset(args.manifest), indent=2))
         return 0
     raise AssertionError(args.command)
 
