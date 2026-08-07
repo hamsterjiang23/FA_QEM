@@ -98,3 +98,19 @@ def run_measured_wsl(command: list[str], cwd: Path, log_dir: Path, timeout: floa
         stderr_path=measured.stderr_path,
         resource_source="gnu_time_v_inside_wsl",
     )
+
+
+def run_repeated(
+    command: list[str],
+    cwd: Path,
+    log_dir: Path,
+    *,
+    wsl: bool,
+    warmups: int = 1,
+    repetitions: int = 3,
+    timeout: float | None = None,
+) -> tuple[list[ProcessResult], list[ProcessResult]]:
+    runner = run_measured_wsl if wsl else run_measured
+    warmup_results = [runner(command, cwd, log_dir / f"warmup-{index + 1}", timeout) for index in range(warmups)]
+    measured_results = [runner(command, cwd, log_dir / f"repeat-{index + 1}", timeout) for index in range(repetitions)]
+    return warmup_results, measured_results

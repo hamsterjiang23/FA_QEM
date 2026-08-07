@@ -54,7 +54,12 @@ def run_baseline(config: ExperimentConfig, method: str, ratio: str) -> RunRecord
                 run_dir=run_dir,
                 target_faces=target,
                 threads=int(config.data["threads"]),
-                parameters={"seed": config.seed},
+                parameters={
+                    "seed": config.seed,
+                    "warmup_runs": int(config.data["timing"]["warmup_runs"]),
+                    "timed_repetitions": int(config.data["timing"]["repeats_under_seconds"]),
+                    "slow_threshold_seconds": float(config.data["timing"]["slow_threshold_seconds"]),
+                },
             )
         )
         output_mesh = load_mesh(result.output, process=False)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+import statistics
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -11,7 +12,7 @@ import numpy as np
 from trimesh.sample import sample_surface
 
 from ..mesh import load_mesh
-from ..process import ProcessResult, run_measured, run_measured_wsl
+from ..process import ProcessResult, run_measured, run_measured_wsl, run_repeated
 from ..util import sha256_file
 
 
@@ -32,6 +33,36 @@ class AdapterResult:
     command: list[str]
     timing: dict[str, Any]
     parameters: dict[str, Any]
+
+
+def _timing_summary(
+    warmups: list[ProcessResult],
+    results: list[ProcessResult],
+    *,
+    calibration_wall_seconds: float | None = None,
+) -> dict[str, Any]:
+    if not results:
+        raise ValueError("at least one measured result is required")
+    wall = [result.wall_seconds for result in results]
+    cpu = [result.cpu_seconds for result in results]
+    rss = [result.peak_rss_bytes for result in results]
+    summary: dict[str, Any] = {
+        "algorithm_wall_seconds": statistics.median(wall),
+        "algorithm_wall_seconds_range": [min(wall), max(wall)],
+        "algorithm_wall_seconds_samples": wall,
+        "cpu_seconds": statistics.median(cpu),
+        "cpu_seconds_range": [min(cpu), max(cpu)],
+        "cpu_seconds_samples": cpu,
+        "peak_rss_bytes": max(rss),
+        "peak_rss_bytes_samples": rss,
+        "resource_measurement": results[-1].resource_source,
+        "warmup_runs": len(warmups),
+        "warmup_wall_seconds": [result.wall_seconds for result in warmups],
+        "repetitions": len(results),
+    }
+    if calibration_wall_seconds is not None:
+        summary["calibration_wall_seconds"] = calibration_wall_seconds
+    return summary
 
 
 class BaselineAdapter(ABC):
@@ -83,20 +114,23 @@ class QSlimAdapter(BaselineAdapter):
             PaperExecutableAdapter._wsl_path(output),
             PaperExecutableAdapter._wsl_path(context.prepared_mesh),
         ]
-        measured = run_measured_wsl(command, context.root, context.run_dir / "logs")
-        if measured.returncode != 0:
-            raise RuntimeError(f"QSlim exited with {measured.returncode}")
+        warmups, results = run_repeated(
+            command,
+            context.root,
+            context.run_dir / "logs" / "benchmark",
+            wsl=True,
+            warmups=int(context.parameters.get("warmup_runs", 1)),
+            repetitions=int(context.parameters.get("timed_repetitions", 3)),
+        )
+        failed = next((result for result in [*warmups, *results] if result.returncode != 0), None)
+        if failed is not None:
+            raise RuntimeError(f"QSlim exited with {failed.returncode}")
+        measured = results[-1]
         return AdapterResult(
             output=output,
             source=self.source,
             command=measured.command,
-            timing={
-                "algorithm_wall_seconds": measured.wall_seconds,
-                "cpu_seconds": measured.cpu_seconds,
-                "peak_rss_bytes": measured.peak_rss_bytes,
-                "resource_measurement": measured.resource_source,
-                "repetitions": 1,
-            },
+            timing=_timing_summary(warmups, results),
             parameters={"target_faces": context.target_faces, "optimization": 3},
         )
 
@@ -169,9 +203,18 @@ class PaperExecutableAdapter(ExecutableAdapter):
                     "placement_policy": "subset_endpoint",
                 }
             )
-        measured = self.measured(command, context)
-        if measured.returncode != 0:
-            raise RuntimeError(f"{self.name} exited with {measured.returncode}")
+        warmups, results = run_repeated(
+            command,
+            context.root,
+            context.run_dir / "logs" / "benchmark",
+            wsl=runtime == "wsl2",
+            warmups=int(context.parameters.get("warmup_runs", 1)),
+            repetitions=int(context.parameters.get("timed_repetitions", 3)),
+        )
+        failed = next((result for result in [*warmups, *results] if result.returncode != 0), None)
+        if failed is not None:
+            raise RuntimeError(f"{self.name} exited with {failed.returncode}")
+        measured = results[-1]
         if self.name == "stmw":
             if not successive_map.is_file():
                 raise RuntimeError("STMW did not produce its successive mapping history")
@@ -185,13 +228,7 @@ class PaperExecutableAdapter(ExecutableAdapter):
             output=output,
             source=self.source,
             command=measured.command,
-            timing={
-                "algorithm_wall_seconds": measured.wall_seconds,
-                "cpu_seconds": measured.cpu_seconds,
-                "peak_rss_bytes": measured.peak_rss_bytes,
-                "resource_measurement": measured.resource_source,
-                "repetitions": 1,
-            },
+            timing=_timing_summary(warmups, results),
             parameters=parameters,
         )
 
@@ -274,26 +311,63 @@ class RobustLPMAdapter(ExternalTemplateAdapter):
             screen_size = min(400, max(screen_size + 1, int(np.ceil(screen_size * scale * 1.01))))
         if best is None:
             raise RuntimeError("RobustLPM calibration produced no output")
-        _, produced, measured, command = best
+        calibration_wall = time.perf_counter() - calibration_start
+        _, _, _, best_command = best
+        best_screen_size = int(best_command[best_command.index("-n") + 1])
+        benchmark_token = time.time_ns()
+
+        def benchmark_once(label: str) -> tuple[Path, ProcessResult, int]:
+            output_dir = context.run_dir / f"robustlpm-benchmark-{benchmark_token}-{label}"
+            output_dir.mkdir(parents=True, exist_ok=True)
+            command = [
+                str(executable),
+                "-i",
+                str(context.prepared_mesh),
+                "-n",
+                str(best_screen_size),
+                "-f",
+                str(context.target_faces),
+                "-o",
+                str(output_dir),
+            ]
+            measured = run_measured(
+                command,
+                context.root,
+                context.run_dir / "logs" / f"benchmark-{label}",
+            )
+            if measured.returncode != 0:
+                raise RuntimeError(f"RobustLPM benchmark {label} exited with {measured.returncode}")
+            candidates = sorted(output_dir.glob("*_ours_final.obj"))
+            if len(candidates) != 1:
+                raise RuntimeError(f"RobustLPM benchmark {label} produced ambiguous output")
+            return candidates[0], measured, len(load_mesh(candidates[0], process=False).faces)
+
+        warmup_count = int(context.parameters.get("warmup_runs", 1))
+        repetition_count = int(context.parameters.get("timed_repetitions", 3))
+        warmup_outputs = [benchmark_once(f"warmup-{index + 1}") for index in range(warmup_count)]
+        measured_outputs = [benchmark_once(f"repeat-{index + 1}") for index in range(repetition_count)]
+        produced, measured, _ = measured_outputs[-1]
+        results = [item[1] for item in measured_outputs]
         output = context.run_dir / "native.obj"
         shutil.copy2(produced, output)
         return AdapterResult(
             output=output,
             source=self.source,
             command=measured.command,
-            timing={
-                "algorithm_wall_seconds": measured.wall_seconds,
-                "calibration_wall_seconds": time.perf_counter() - calibration_start,
-                "cpu_seconds": measured.cpu_seconds,
-                "peak_rss_bytes": measured.peak_rss_bytes,
-                "resource_measurement": measured.resource_source,
-                "repetitions": 1,
-            },
+            timing=_timing_summary(
+                [item[1] for item in warmup_outputs],
+                results,
+                calibration_wall_seconds=calibration_wall,
+            ),
             parameters={
-                "screen_size": int(command[command.index("-n") + 1]),
+                "screen_size": best_screen_size,
                 "final_face_cap": context.target_faces,
                 "target_control": "official -f option",
                 "calibration_attempts": attempts,
+                "benchmark_actual_faces": {
+                    "warmup": [item[2] for item in warmup_outputs],
+                    "repetitions": [item[2] for item in measured_outputs],
+                },
             },
         )
 
@@ -306,7 +380,7 @@ class ICEAdapter(ExternalTemplateAdapter):
         executable = self.executable(context.root)
         target_vertices = max(4, context.target_faces // 2 + 2)
         attempts: list[dict[str, Any]] = []
-        best: tuple[int, Path, ProcessResult] | None = None
+        best: tuple[int, Path, ProcessResult, int] | None = None
         calibration_start = time.perf_counter()
         tried: set[int] = set()
         for _ in range(6):
@@ -338,31 +412,59 @@ class ICEAdapter(ExternalTemplateAdapter):
             )
             error = abs(actual_faces - context.target_faces)
             if best is None or error < best[0]:
-                best = (error, candidate, measured)
+                best = (error, candidate, measured, target_vertices)
             if error / context.target_faces <= 0.02:
                 break
             target_vertices = max(4, round(target_vertices * context.target_faces / max(actual_faces, 1)))
         if best is None:
             raise RuntimeError("ICE calibration produced no output")
-        _, best_path, measured = best
+        calibration_wall = time.perf_counter() - calibration_start
+        _, _, _, calibrated_vertices = best
+
+        def benchmark_once(label: str) -> tuple[Path, ProcessResult, int]:
+            candidate = context.run_dir / f"ice-benchmark-{label}-v{calibrated_vertices}.obj"
+            command = [
+                "wsl.exe",
+                PaperExecutableAdapter._wsl_path(executable),
+                PaperExecutableAdapter._wsl_path(context.prepared_mesh),
+                str(calibrated_vertices),
+                PaperExecutableAdapter._wsl_path(candidate),
+            ]
+            measured = run_measured_wsl(
+                command,
+                context.root,
+                context.run_dir / "logs" / f"benchmark-{label}",
+            )
+            if measured.returncode != 0 or not candidate.is_file():
+                raise RuntimeError(f"ICE benchmark {label} exited with {measured.returncode}")
+            return candidate, measured, len(load_mesh(candidate, process=False).faces)
+
+        warmup_count = int(context.parameters.get("warmup_runs", 1))
+        repetition_count = int(context.parameters.get("timed_repetitions", 3))
+        warmup_outputs = [benchmark_once(f"warmup-{index + 1}") for index in range(warmup_count)]
+        measured_outputs = [benchmark_once(f"repeat-{index + 1}") for index in range(repetition_count)]
+        best_path, measured, _ = measured_outputs[-1]
+        results = [item[1] for item in measured_outputs]
         output = context.run_dir / "native.obj"
         shutil.copy2(best_path, output)
         return AdapterResult(
             output=output,
             source=self.source,
             command=measured.command,
-            timing={
-                "algorithm_wall_seconds": measured.wall_seconds,
-                "calibration_wall_seconds": time.perf_counter() - calibration_start,
-                "cpu_seconds": measured.cpu_seconds,
-                "peak_rss_bytes": measured.peak_rss_bytes,
-                "resource_measurement": measured.resource_source,
-                "repetitions": 1,
-            },
+            timing=_timing_summary(
+                [item[1] for item in warmup_outputs],
+                results,
+                calibration_wall_seconds=calibration_wall,
+            ),
             parameters={
                 "weight": 0.0,
                 "export_semantics": "intrinsic_visualization_geometry",
                 "calibration_attempts": attempts,
+                "calibrated_target_vertices": calibrated_vertices,
+                "benchmark_actual_faces": {
+                    "warmup": [item[2] for item in warmup_outputs],
+                    "repetitions": [item[2] for item in measured_outputs],
+                },
             },
         )
 
@@ -407,13 +509,7 @@ class CWFAdapter(ExternalTemplateAdapter):
             output=output,
             source=self.source,
             command=measured.command,
-            timing={
-                "algorithm_wall_seconds": measured.wall_seconds,
-                "cpu_seconds": measured.cpu_seconds,
-                "peak_rss_bytes": measured.peak_rss_bytes,
-                "resource_measurement": measured.resource_source,
-                "repetitions": 1,
-            },
+            timing=_timing_summary([], [measured]),
             parameters={
                 "target_sites": target_sites,
                 "initialization": "seeded area-weighted source-surface samples",

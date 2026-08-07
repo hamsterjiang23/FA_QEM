@@ -32,6 +32,7 @@
 - `trimesh.split` made component counting on fully split attribute views exceed the diagnostic timeout. Topology reporting now uses SciPy sparse connected components and computes both the attribute and `1e-6` welded geometry views in a few seconds.
 - Windows process-tree sampling cannot see Linux descendants behind `wsl.exe`. New WSL runs are wrapped in `/usr/bin/time -v` and label CPU/RSS provenance as `gnu_time_v_inside_wsl`; the already-running CWF 50% job has a separate 60-second `/proc` monitor because it predates this change.
 - The repair tool's inspect command reports self-intersection as `not_evaluated` in the current environment because no backend is available. Evaluation records preserve that explicit status instead of treating it as zero intersections.
+- Sub-hour adapters now consume the experiment timing configuration, run one warmup followed by three measured repetitions, and report all samples plus median/range. RobustLPM and ICE keep target calibration time separate and rerun the selected parameter into distinct benchmark outputs; hour-scale CWF remains a single measured run.
 
 ## Questions for review
 
