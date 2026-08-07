@@ -11,6 +11,7 @@ from .mesh import prepare_source
 from .repair import repair_run
 from .report import build_report
 from .runner import load_run_record, run_baseline
+from .texture import rebake_run
 from .util import atomic_json
 
 
@@ -25,6 +26,9 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--ratio", required=True, choices=("0.5", "0.1", "0.01"))
     repair = subparsers.add_parser("repair")
     repair.add_argument("--run-id", required=True)
+    rebake = subparsers.add_parser("rebake")
+    rebake.add_argument("--run-id", required=True)
+    rebake.add_argument("--resolution", type=int, default=2048)
     evaluate = subparsers.add_parser("evaluate")
     evaluate.add_argument("--run-id", required=True)
     subparsers.add_parser("report")
@@ -54,6 +58,10 @@ def main(argv: list[str] | None = None) -> int:
         result = repair_run(config, args.run_id)
         print(json.dumps(result, indent=2))
         return 0 if result["status"] == "SUCCESS" else 1
+    if args.command == "rebake":
+        result = rebake_run(config, args.run_id, args.resolution)
+        print(json.dumps(result, indent=2))
+        return 0
     if args.command == "evaluate":
         run_path = config.artifacts / "runs" / args.run_id / "run.json"
         record = load_run_record(run_path)
@@ -62,12 +70,15 @@ def main(argv: list[str] | None = None) -> int:
         manifest = json.loads(
             (config.artifacts / "prepared" / "manifest.json").read_text(encoding="utf-8")
         )
+        is_asset = record.get("track") == "asset"
         metrics = evaluate_paths(
-            config.artifacts / "prepared" / "geometry_unit.obj",
+            config.source if is_asset else config.artifacts / "prepared" / "geometry_unit.obj",
             config.root / record["output_path"],
             int(config.data["evaluation"]["geometry_samples"]),
             config.seed,
             float(manifest["transform"]["diagonal"]),
+            input_is_normalized=not is_asset,
+            texture_count=(int(config.data["evaluation"]["texture_samples"]) if is_asset else None),
         )
         record.setdefault("metrics", {}).update(metrics)
         atomic_json(run_path, record)

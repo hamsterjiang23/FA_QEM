@@ -400,8 +400,25 @@ static bool edge_exists(const Mesh& mesh, int a, int b) {
 }
 
 static bool collapse_valid(const Mesh& mesh, const Candidate& candidate) {
+    const bool physical_edge = mesh.vertices[candidate.a].neighbors.contains(candidate.b);
+    if (physical_edge) {
+        std::unordered_set<int> common;
+        for (const int neighbor : mesh.vertices[candidate.a].neighbors) {
+            if (mesh.vertices[candidate.b].neighbors.contains(neighbor)) common.insert(neighbor);
+        }
+        std::unordered_set<int> edge_link;
+        for (const int face_index : mesh.vertices[candidate.a].faces) {
+            const Face& face = mesh.faces[face_index];
+            if (!face.active || std::find(face.v.begin(), face.v.end(), candidate.b) == face.v.end()) continue;
+            for (const int vertex : face.v) {
+                if (vertex != candidate.a && vertex != candidate.b) edge_link.insert(vertex);
+            }
+        }
+        if (common != edge_link) return false;
+    }
     std::unordered_set<int> affected = mesh.vertices[candidate.a].faces;
     affected.insert(mesh.vertices[candidate.b].faces.begin(), mesh.vertices[candidate.b].faces.end());
+    std::unordered_set<std::string> mapped_faces;
     for (const int face_index : affected) {
         const Face& face = mesh.faces[face_index];
         if (!face.active) continue;
@@ -420,6 +437,10 @@ static bool collapse_valid(const Mesh& mesh, const Candidate& candidate) {
         }
         degenerates = mapped[0] == mapped[1] || mapped[1] == mapped[2] || mapped[2] == mapped[0];
         if (degenerates) continue;
+        std::sort(mapped.begin(), mapped.end());
+        const std::string face_key = std::to_string(mapped[0]) + ":" + std::to_string(mapped[1]) + ":" +
+                                     std::to_string(mapped[2]);
+        if (!mapped_faces.insert(face_key).second) return false;
         const Vec3 old_normal = (before[1] - before[0]).cross(before[2] - before[0]);
         const Vec3 new_normal = (after[1] - after[0]).cross(after[2] - after[0]);
         if (new_normal.squaredNorm() <= 1e-24) return false;
@@ -428,28 +449,53 @@ static bool collapse_valid(const Mesh& mesh, const Candidate& candidate) {
     return true;
 }
 
-static void collapse(Mesh& mesh, const Candidate& candidate) {
+static std::vector<int> collapse(Mesh& mesh, const Candidate& candidate) {
     Vertex& keep = mesh.vertices[candidate.a];
     Vertex& remove = mesh.vertices[candidate.b];
+    std::unordered_set<int> affected = keep.faces;
+    affected.insert(remove.faces.begin(), remove.faces.end());
+    std::unordered_set<int> impacted{candidate.a, candidate.b};
+    for (const int face_index : affected) {
+        const Face& face = mesh.faces[face_index];
+        for (const int vertex : face.v) impacted.insert(vertex);
+    }
+    std::unordered_set<int> stale_neighbors;
+    for (const int vertex : impacted) {
+        stale_neighbors.insert(mesh.vertices[vertex].neighbors.begin(), mesh.vertices[vertex].neighbors.end());
+    }
+    for (const int neighbor : stale_neighbors) {
+        for (const int vertex : impacted) mesh.vertices[neighbor].neighbors.erase(vertex);
+    }
+    for (const int face_index : affected) {
+        const Face& face = mesh.faces[face_index];
+        for (const int vertex : face.v) mesh.vertices[vertex].faces.erase(face_index);
+    }
+
     keep.p = candidate.position;
     keep.memory_quadric += remove.memory_quadric;
     if (keep.has_uv && remove.has_uv) keep.uv = 0.5 * (keep.uv + remove.uv);
     if (keep.has_normal && remove.has_normal && (keep.normal + remove.normal).norm() > 0) {
         keep.normal = (keep.normal + remove.normal).normalized();
     }
-    std::unordered_set<int> affected = keep.faces;
-    affected.insert(remove.faces.begin(), remove.faces.end());
     for (const int face_index : affected) {
         Face& face = mesh.faces[face_index];
         if (!face.active) continue;
         for (int& vertex : face.v) {
             if (vertex == candidate.b) vertex = candidate.a;
         }
-        if (face.v[0] == face.v[1] || face.v[1] == face.v[2] || face.v[2] == face.v[0]) face.active = false;
+        if (face.v[0] == face.v[1] || face.v[1] == face.v[2] || face.v[2] == face.v[0]) {
+            face.active = false;
+            --mesh.active_faces;
+            continue;
+        }
+        for (const int vertex : face.v) {
+            mesh.vertices[vertex].faces.insert(face_index);
+            impacted.insert(vertex);
+        }
     }
     remove.active = false;
-    ++keep.revision;
-    ++remove.revision;
+    remove.faces.clear();
+    remove.neighbors.clear();
     for (auto iterator = mesh.virtual_edges.begin(); iterator != mesh.virtual_edges.end();) {
         if (iterator->a == candidate.b || iterator->b == candidate.b) {
             const int other = iterator->a == candidate.b ? iterator->b : iterator->a;
@@ -459,7 +505,29 @@ static void collapse(Mesh& mesh, const Candidate& candidate) {
             ++iterator;
         }
     }
-    rebuild_connectivity(mesh);
+    for (const int vertex : impacted) {
+        mesh.vertices[vertex].neighbors.clear();
+    }
+    for (const int vertex : impacted) {
+        Vertex& current = mesh.vertices[vertex];
+        ++current.revision;
+        if (!current.active) continue;
+        for (const int face_index : current.faces) {
+            const Face& face = mesh.faces[face_index];
+            if (!face.active) continue;
+            for (const int other : face.v) {
+                if (other == vertex || !mesh.vertices[other].active) continue;
+                current.neighbors.insert(other);
+                mesh.vertices[other].neighbors.insert(vertex);
+            }
+        }
+    }
+    std::vector<int> result;
+    result.reserve(impacted.size());
+    for (const int vertex : impacted) {
+        if (mesh.vertices[vertex].active) result.push_back(vertex);
+    }
+    return result;
 }
 
 static void write_obj(const Mesh& mesh, const fs::path& path) {
@@ -514,9 +582,11 @@ static void simplify(Mesh& mesh, const Options& options) {
             ++rejected;
             continue;
         }
-        collapse(mesh, current);
+        const std::vector<int> impacted = collapse(mesh, current);
         ++collapses;
-        for (const int neighbor : mesh.vertices[current.a].neighbors) enqueue(current.a, neighbor);
+        for (const int vertex : impacted) {
+            for (const int neighbor : mesh.vertices[vertex].neighbors) enqueue(vertex, neighbor);
+        }
         for (const auto& edge : mesh.virtual_edges) {
             if (edge.a == current.a || edge.b == current.a) enqueue(edge.a, edge.b);
         }
@@ -582,4 +652,3 @@ int main(int argc, char** argv) {
         return 1;
     }
 }
-

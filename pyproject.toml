@@ -17,6 +17,8 @@ dependencies = [
   "rtree>=1.4,<2",
   "scipy>=1.15,<2",
   "trimesh>=4.8,<5",
+  "pygltflib>=1.16,<2",
+  "xatlas>=0.0.11,<1",
 ]
 
 [project.optional-dependencies]
@@ -24,10 +26,6 @@ dev = [
   "basedpyright>=1.31,<2",
   "pytest>=8.4,<9",
   "ruff>=0.12,<1",
-]
-texture = [
-  "pygltflib>=1.16,<2",
-  "xatlas>=0.0.11,<1",
 ]
 
 [project.scripts]

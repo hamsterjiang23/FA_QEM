@@ -162,12 +162,12 @@ class PaperExecutableAdapter(ExecutableAdapter):
 
 class QEM4VRAdapter(PaperExecutableAdapter):
     name = "qem4vr"
-    source = "paper-faithful local reimplementation"
+    source = "paper-guided local reimplementation; assumptions disclosed"
 
 
 class STMWAdapter(PaperExecutableAdapter):
     name = "stmw"
-    source = "paper-faithful local reimplementation"
+    source = "partial paper-guided local reimplementation; known gaps disclosed"
 
 
 class ExternalTemplateAdapter(ExecutableAdapter):
@@ -186,30 +186,61 @@ class RobustLPMAdapter(ExternalTemplateAdapter):
 
     def run(self, context: AdapterContext) -> AdapterResult:
         executable = self.executable(context.root)
-        output_dir = context.run_dir / "robustlpm-output"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        command = [
-            str(executable),
-            "-i",
-            str(context.prepared_mesh),
-            "-n",
-            str(int(context.parameters.get("screen_size", 100))),
-            "-f",
-            str(context.target_faces),
-            "-o",
-            str(output_dir),
-        ]
-        measured = self.measured(command, context)
-        if measured.returncode != 0:
-            raise RuntimeError(f"RobustLPM exited with {measured.returncode}")
-        expected = output_dir / f"{context.prepared_mesh.stem}_ours_final.obj"
-        candidates = sorted(output_dir.glob("*_ours_final.obj"))
-        if expected.is_file():
-            produced = expected
-        elif len(candidates) == 1:
-            produced = candidates[0]
-        else:
-            raise RuntimeError("RobustLPM did not produce an unambiguous final OBJ")
+        screen_size = int(context.parameters.get("screen_size", 100))
+        attempts: list[dict[str, Any]] = []
+        best: tuple[int, Path, ProcessResult, list[str]] | None = None
+        calibration_start = time.perf_counter()
+        for attempt_index in range(4):
+            output_dir = context.run_dir / f"robustlpm-n{screen_size}"
+            output_dir.mkdir(parents=True, exist_ok=True)
+            command = [
+                str(executable),
+                "-i",
+                str(context.prepared_mesh),
+                "-n",
+                str(screen_size),
+                "-f",
+                str(context.target_faces),
+                "-o",
+                str(output_dir),
+            ]
+            measured = run_measured(
+                command,
+                context.root,
+                context.run_dir / "logs" / f"n{screen_size}",
+            )
+            if measured.returncode != 0:
+                raise RuntimeError(f"RobustLPM exited with {measured.returncode} at -n {screen_size}")
+            expected = output_dir / f"{context.prepared_mesh.stem}_ours_final.obj"
+            candidates = sorted(output_dir.glob("*_ours_final.obj"))
+            if expected.is_file():
+                produced = expected
+            elif len(candidates) == 1:
+                produced = candidates[0]
+            else:
+                raise RuntimeError("RobustLPM did not produce an unambiguous final OBJ")
+            actual_faces = len(load_mesh(produced, process=False).faces)
+            relative_error = abs(actual_faces - context.target_faces) / context.target_faces
+            attempts.append(
+                {
+                    "attempt": attempt_index + 1,
+                    "screen_size": screen_size,
+                    "actual_faces": actual_faces,
+                    "wall_seconds": measured.wall_seconds,
+                }
+            )
+            error = abs(actual_faces - context.target_faces)
+            if best is None or error < best[0]:
+                best = (error, produced, measured, command)
+            if relative_error <= 0.02:
+                break
+            if actual_faces >= context.target_faces:
+                break
+            scale = (context.target_faces / max(actual_faces, 1)) ** 0.5
+            screen_size = min(400, max(screen_size + 1, int(np.ceil(screen_size * scale * 1.01))))
+        if best is None:
+            raise RuntimeError("RobustLPM calibration produced no output")
+        _, produced, measured, command = best
         output = context.run_dir / "native.obj"
         shutil.copy2(produced, output)
         return AdapterResult(
@@ -218,14 +249,16 @@ class RobustLPMAdapter(ExternalTemplateAdapter):
             command=command,
             timing={
                 "algorithm_wall_seconds": measured.wall_seconds,
+                "calibration_wall_seconds": time.perf_counter() - calibration_start,
                 "cpu_seconds": measured.cpu_seconds,
                 "peak_rss_bytes": measured.peak_rss_bytes,
                 "repetitions": 1,
             },
             parameters={
-                "screen_size": int(context.parameters.get("screen_size", 100)),
+                "screen_size": int(command[command.index("-n") + 1]),
                 "final_face_cap": context.target_faces,
                 "target_control": "official -f option",
+                "calibration_attempts": attempts,
             },
         )
 

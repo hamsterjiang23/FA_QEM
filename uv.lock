@@ -63,11 +63,13 @@ dependencies = [
     { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "pillow" },
     { name = "psutil" },
+    { name = "pygltflib" },
     { name = "pyyaml" },
     { name = "rtree" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "trimesh" },
+    { name = "xatlas" },
 ]
 
 [package.optional-dependencies]
@@ -75,10 +77,6 @@ dev = [
     { name = "basedpyright" },
     { name = "pytest" },
     { name = "ruff" },
-]
-texture = [
-    { name = "pygltflib" },
-    { name = "xatlas" },
 ]
 
 [package.metadata]
@@ -89,16 +87,16 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.1,<3" },
     { name = "pillow", specifier = ">=11,<13" },
     { name = "psutil", specifier = ">=7,<8" },
-    { name = "pygltflib", marker = "extra == 'texture'", specifier = ">=1.16,<2" },
+    { name = "pygltflib", specifier = ">=1.16,<2" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.4,<9" },
     { name = "pyyaml", specifier = ">=6,<7" },
     { name = "rtree", specifier = ">=1.4,<2" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.12,<1" },
     { name = "scipy", specifier = ">=1.15,<2" },
     { name = "trimesh", specifier = ">=4.8,<5" },
-    { name = "xatlas", marker = "extra == 'texture'", specifier = ">=0.0.11,<1" },
+    { name = "xatlas", specifier = ">=0.0.11,<1" },
 ]
-provides-extras = ["dev", "texture"]
+provides-extras = ["dev"]
 
 [[package]]
 name = "fast-simplification"
