@@ -15,6 +15,7 @@ uv sync --extra dev
 uv run fa-qem-bench --config experiment.yaml doctor
 uv run fa-qem-bench --config experiment.yaml prepare
 uv run fa-qem-bench --config experiment.yaml run --method qem --ratio 0.5
+uv run python scripts/validate_qem_consistency.py
 uv run pytest
 ```
 

@@ -33,6 +33,7 @@
 - Windows process-tree sampling cannot see Linux descendants behind `wsl.exe`. New WSL runs are wrapped in `/usr/bin/time -v` and label CPU/RSS provenance as `gnu_time_v_inside_wsl`; the already-running CWF 50% job has a separate 60-second `/proc` monitor because it predates this change.
 - The repair tool's inspect command reports self-intersection as `not_evaluated` in the current environment because no backend is available. Evaluation records preserve that explicit status instead of treating it as zero intersections.
 - Sub-hour adapters now consume the experiment timing configuration, run one warmup followed by three measured repetitions, and report all samples plus median/range. RobustLPM and ICE keep target calibration time separate and rerun the selected parameter into distinct benchmark outputs; hour-scale CWF remains a single measured run.
+- On the fixed closed-octahedron fixture, official QSlim and the shared closed-manifold QEM core both produce a four-face watertight mesh. Against the same source, their 100,000-sample Hausdorff and Chamfer errors differ by 0.030% and 0.325%, respectively, within the declared 2% consistency tolerance.
 
 ## Questions for review
 
