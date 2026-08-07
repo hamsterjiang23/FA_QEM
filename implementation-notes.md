@@ -38,6 +38,7 @@
 - The resumable `sweep` command validates source/output hashes, writes stage progress atomically, creates an asset-track failure record when no research output exists, and refreshes evaluation after a 2048-pixel rebake.
 - The CWF compatibility monitor can be folded into a completed run with `recover-resources`; a late-started monitor explicitly marks peak RSS as a lower bound instead of presenting it as a complete-process maximum.
 - RobustLPM 50% exposed stricter degeneracy/non-manifold failures in the external repair inspector than in the internal welded topology summary. Repair eligibility now treats either hard gate as authoritative, preventing a false `not_required` asset result.
+- Report contact sheets were initially cached only by filename, so rerunning a baseline could leave a stale render. Report generation now deterministically redraws every available output before writing the summary.
 
 ## Questions for review
 

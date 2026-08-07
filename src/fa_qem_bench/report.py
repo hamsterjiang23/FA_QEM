@@ -32,16 +32,15 @@ def build_report(config: ExperimentConfig) -> Path:
             continue
         render_path = report_dir / "renders" / f"{record['run_id']}.png"
         try:
-            if not render_path.is_file():
-                render_contact_sheet(
-                    config.root / output,
-                    render_path,
-                    manifest["transform"]["center"],
-                    float(manifest["transform"]["diagonal"]),
-                    coordinates_are_normalized=record.get("track") == "research",
-                    label=str(record["run_id"]),
-                    resolution=384,
-                )
+            render_contact_sheet(
+                config.root / output,
+                render_path,
+                manifest["transform"]["center"],
+                float(manifest["transform"]["diagonal"]),
+                coordinates_are_normalized=record.get("track") == "research",
+                label=str(record["run_id"]),
+                resolution=384,
+            )
             record["contact_sheet"] = str(render_path.relative_to(report_dir)).replace("\\", "/")
         except Exception as error:
             record["contact_sheet"] = ""
