@@ -62,11 +62,26 @@ def read_wsl_monitor(path: Path) -> dict[str, Any]:
     }
 
 
-def recover_wsl_resources(config: ExperimentConfig, run_id: str, monitor_path: Path) -> dict[str, Any]:
+def recover_wsl_resources(
+    config: ExperimentConfig,
+    run_id: str,
+    monitor_path: Path,
+    *,
+    repository_commit: str | None = None,
+    repository_dirty: bool | None = None,
+    provenance_note: str | None = None,
+) -> dict[str, Any]:
     record_path = config.artifacts / "runs" / run_id / "run.json"
     record = load_run_record(record_path)
     timing = read_wsl_monitor(monitor_path)
     timing["resource_monitor_path"] = str(monitor_path.resolve().relative_to(config.root))
     record["timing"] = timing
+    repository = record.setdefault("environment", {}).setdefault("repository", {})
+    if repository_commit is not None:
+        repository["commit"] = repository_commit
+    if repository_dirty is not None:
+        repository["dirty"] = repository_dirty
+    if provenance_note is not None:
+        repository["recovery_note"] = provenance_note
     atomic_json(record_path, record)
     return timing

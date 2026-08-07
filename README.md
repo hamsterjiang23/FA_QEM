@@ -33,7 +33,10 @@ recover its sampled resource record with:
 ```powershell
 uv run fa-qem-bench --config experiment.yaml recover-resources `
   --run-id cwf-0p5-research `
-  --monitor artifacts/jobs/cwf-0p5-resource.csv
+  --monitor artifacts/jobs/cwf-0p5-resource.csv `
+  --repository-commit 5f3710b `
+  --repository-dirty `
+  --provenance-note "job launched before repository snapshot support"
 ```
 
 External repositories and binaries are intentionally excluded from Git. Their

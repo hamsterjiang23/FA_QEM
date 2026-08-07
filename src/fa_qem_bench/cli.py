@@ -35,6 +35,9 @@ def _parser() -> argparse.ArgumentParser:
     recover = subparsers.add_parser("recover-resources")
     recover.add_argument("--run-id", required=True)
     recover.add_argument("--monitor", required=True, type=Path)
+    recover.add_argument("--repository-commit")
+    recover.add_argument("--repository-dirty", action=argparse.BooleanOptionalAction, default=None)
+    recover.add_argument("--provenance-note")
     sweep = subparsers.add_parser("sweep")
     sweep.add_argument("--methods", nargs="+", choices=SUPPORTED_METHODS, default=list(SUPPORTED_METHODS))
     sweep.add_argument("--ratios", nargs="+", choices=("0.5", "0.1", "0.01"), default=["0.5", "0.1", "0.01"])
@@ -76,7 +79,14 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(metrics, indent=2))
         return 0
     if args.command == "recover-resources":
-        metrics = recover_wsl_resources(config, args.run_id, args.monitor)
+        metrics = recover_wsl_resources(
+            config,
+            args.run_id,
+            args.monitor,
+            repository_commit=args.repository_commit,
+            repository_dirty=args.repository_dirty,
+            provenance_note=args.provenance_note,
+        )
         print(json.dumps(metrics, indent=2))
         return 0
     if args.command == "sweep":
