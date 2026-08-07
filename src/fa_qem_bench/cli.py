@@ -67,9 +67,7 @@ def main(argv: list[str] | None = None) -> int:
         record = load_run_record(run_path)
         if not record.get("output_path"):
             raise ValueError(f"run has no output: {args.run_id}")
-        manifest = json.loads(
-            (config.artifacts / "prepared" / "manifest.json").read_text(encoding="utf-8")
-        )
+        manifest = json.loads((config.artifacts / "prepared" / "manifest.json").read_text(encoding="utf-8"))
         is_asset = record.get("track") == "asset"
         metrics = evaluate_paths(
             config.source if is_asset else config.artifacts / "prepared" / "geometry_unit.obj",

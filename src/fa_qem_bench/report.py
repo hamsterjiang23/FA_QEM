@@ -24,9 +24,7 @@ def build_report(config: ExperimentConfig) -> Path:
     records = collect_records(config)
     report_dir = config.artifacts / "report"
     report_dir.mkdir(parents=True, exist_ok=True)
-    manifest = json.loads(
-        (config.artifacts / "prepared" / "manifest.json").read_text(encoding="utf-8")
-    )
+    manifest = json.loads((config.artifacts / "prepared" / "manifest.json").read_text(encoding="utf-8"))
     for record in records:
         output = record.get("output_path")
         if not output:

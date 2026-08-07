@@ -14,12 +14,8 @@ from .texture import _sample_image
 def _view_matrix() -> np.ndarray:
     yaw = np.deg2rad(18.0)
     pitch = np.deg2rad(-22.0)
-    rotate_z = np.array(
-        [[np.cos(yaw), -np.sin(yaw), 0.0], [np.sin(yaw), np.cos(yaw), 0.0], [0.0, 0.0, 1.0]]
-    )
-    rotate_x = np.array(
-        [[1.0, 0.0, 0.0], [0.0, np.cos(pitch), -np.sin(pitch)], [0.0, np.sin(pitch), np.cos(pitch)]]
-    )
+    rotate_z = np.array([[np.cos(yaw), -np.sin(yaw), 0.0], [np.sin(yaw), np.cos(yaw), 0.0], [0.0, 0.0, 1.0]])
+    rotate_x = np.array([[1.0, 0.0, 0.0], [0.0, np.cos(pitch), -np.sin(pitch)], [0.0, np.sin(pitch), np.cos(pitch)]])
     return rotate_x @ rotate_z
 
 
@@ -47,9 +43,7 @@ def render_mesh(
     screen, _, viewed = _screen_coordinates(vertices, resolution)
     zbuffer = np.full((resolution, resolution), -np.inf, dtype=np.float64)
     canvas = np.full((resolution, resolution, 3), 245.0, dtype=np.float32)
-    face_normals = np.cross(
-        viewed[faces[:, 1]] - viewed[faces[:, 0]], viewed[faces[:, 2]] - viewed[faces[:, 0]]
-    )
+    face_normals = np.cross(viewed[faces[:, 1]] - viewed[faces[:, 0]], viewed[faces[:, 2]] - viewed[faces[:, 0]])
     face_normals /= np.maximum(np.linalg.norm(face_normals, axis=1, keepdims=True), 1e-20)
     light = np.array([-0.25, -0.35, 0.9])
     light /= np.linalg.norm(light)

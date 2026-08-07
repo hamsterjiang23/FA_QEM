@@ -66,11 +66,22 @@ struct Mesh {
     std::size_t active_faces{};
 };
 
+struct FaceSnapshot {
+    std::uint32_t face{};
+    std::array<Vec3, 3> vertices{};
+};
+
+struct CollapseRecord {
+    std::vector<FaceSnapshot> before;
+    std::vector<std::uint32_t> after;
+};
+
 struct Options {
     std::string method;
     fs::path input;
     fs::path output;
     fs::path checkpoint_dir;
+    fs::path successive_map;
     std::size_t target_faces{};
     double virtual_radius{0.01};
     double boundary_weight{1000.0};
@@ -314,11 +325,97 @@ static void initialize_quadrics(Mesh& mesh, const Options& options) {
     }
 }
 
-static std::string position_key(const Vec3& point, double cell) {
-    const auto x = static_cast<long long>(std::llround(point.x() / cell));
-    const auto y = static_cast<long long>(std::llround(point.y() / cell));
-    const auto z = static_cast<long long>(std::llround(point.z() / cell));
-    return std::to_string(x) + ":" + std::to_string(y) + ":" + std::to_string(z);
+static double point_triangle_squared_distance(const Vec3& point, const Vec3& a, const Vec3& b, const Vec3& c) {
+    const Vec3 ab = b - a;
+    const Vec3 ac = c - a;
+    const Vec3 ap = point - a;
+    const double d1 = ab.dot(ap);
+    const double d2 = ac.dot(ap);
+    if (d1 <= 0.0 && d2 <= 0.0) return ap.squaredNorm();
+    const Vec3 bp = point - b;
+    const double d3 = ab.dot(bp);
+    const double d4 = ac.dot(bp);
+    if (d3 >= 0.0 && d4 <= d3) return bp.squaredNorm();
+    const double vc = d1 * d4 - d3 * d2;
+    if (vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0) {
+        const double v = d1 / (d1 - d3);
+        return (point - (a + v * ab)).squaredNorm();
+    }
+    const Vec3 cp = point - c;
+    const double d5 = ab.dot(cp);
+    const double d6 = ac.dot(cp);
+    if (d6 >= 0.0 && d5 <= d6) return cp.squaredNorm();
+    const double vb = d5 * d2 - d1 * d6;
+    if (vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0) {
+        const double w = d2 / (d2 - d6);
+        return (point - (a + w * ac)).squaredNorm();
+    }
+    const double va = d3 * d6 - d5 * d4;
+    if (va <= 0.0 && (d4 - d3) >= 0.0 && (d5 - d6) >= 0.0) {
+        const double w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+        return (point - (b + w * (c - b))).squaredNorm();
+    }
+    const Vec3 normal = ab.cross(ac);
+    const double denominator = normal.squaredNorm();
+    if (denominator <= 1e-30) {
+        return std::min({(point - a).squaredNorm(), (point - b).squaredNorm(), (point - c).squaredNorm()});
+    }
+    const double signed_distance = normal.dot(ap);
+    return signed_distance * signed_distance / denominator;
+}
+
+static double segment_segment_squared_distance(const Vec3& p1, const Vec3& q1, const Vec3& p2, const Vec3& q2) {
+    const Vec3 d1 = q1 - p1;
+    const Vec3 d2 = q2 - p2;
+    const Vec3 r = p1 - p2;
+    const double a = d1.squaredNorm();
+    const double e = d2.squaredNorm();
+    const double f = d2.dot(r);
+    double s = 0.0;
+    double t = 0.0;
+    if (a <= 1e-30 && e <= 1e-30) return r.squaredNorm();
+    if (a <= 1e-30) {
+        t = std::clamp(f / e, 0.0, 1.0);
+    } else {
+        const double c = d1.dot(r);
+        if (e <= 1e-30) {
+            s = std::clamp(-c / a, 0.0, 1.0);
+        } else {
+            const double b = d1.dot(d2);
+            const double denominator = a * e - b * b;
+            if (denominator > 1e-30) s = std::clamp((b * f - c * e) / denominator, 0.0, 1.0);
+            t = (b * s + f) / e;
+            if (t < 0.0) {
+                t = 0.0;
+                s = std::clamp(-c / a, 0.0, 1.0);
+            } else if (t > 1.0) {
+                t = 1.0;
+                s = std::clamp((b - c) / a, 0.0, 1.0);
+            }
+        }
+    }
+    return ((p1 + s * d1) - (p2 + t * d2)).squaredNorm();
+}
+
+static double triangle_triangle_squared_distance(const Mesh& mesh, const Face& first, const Face& second) {
+    std::array<Vec3, 3> a;
+    std::array<Vec3, 3> b;
+    for (int corner = 0; corner < 3; ++corner) {
+        a[corner] = mesh.vertices[first.v[corner]].p;
+        b[corner] = mesh.vertices[second.v[corner]].p;
+    }
+    double result = std::numeric_limits<double>::infinity();
+    for (int corner = 0; corner < 3; ++corner) {
+        result = std::min(result, point_triangle_squared_distance(a[corner], b[0], b[1], b[2]));
+        result = std::min(result, point_triangle_squared_distance(b[corner], a[0], a[1], a[2]));
+    }
+    for (int edge_a = 0; edge_a < 3; ++edge_a) {
+        for (int edge_b = 0; edge_b < 3; ++edge_b) {
+            result = std::min(result, segment_segment_squared_distance(
+                                          a[edge_a], a[(edge_a + 1) % 3], b[edge_b], b[(edge_b + 1) % 3]));
+        }
+    }
+    return result;
 }
 
 static void build_virtual_edges(Mesh& mesh, double radius) {
@@ -327,25 +424,63 @@ static void build_virtual_edges(Mesh& mesh, double radius) {
         components.unite(face.v[0], face.v[1]);
         components.unite(face.v[1], face.v[2]);
     }
-    const double cell = std::max(radius, 1e-9);
-    std::unordered_map<std::string, std::vector<int>> buckets;
+    std::unordered_set<int> roots;
     for (std::size_t index = 0; index < mesh.vertices.size(); ++index) {
-        buckets[position_key(mesh.vertices[index].p, cell)].push_back(static_cast<int>(index));
+        if (mesh.vertices[index].active) roots.insert(components.find(static_cast<int>(index)));
     }
-    for (const auto& [key, vertices] : buckets) {
-        (void)key;
-        for (std::size_t i = 0; i < vertices.size(); ++i) {
-            int best = -1;
-            double best_distance = 2.0 * radius;
-            for (std::size_t j = i + 1; j < vertices.size(); ++j) {
-                if (components.find(vertices[i]) == components.find(vertices[j])) continue;
-                const double distance = (mesh.vertices[vertices[i]].p - mesh.vertices[vertices[j]].p).norm();
-                if (distance < best_distance) {
-                    best_distance = distance;
-                    best = vertices[j];
+    if (roots.size() <= 1) return;
+    const double threshold = 2.0 * radius;
+    const double cell = std::max(threshold, 1e-9);
+    std::unordered_map<std::string, std::vector<int>> buckets;
+    for (std::size_t face_index = 0; face_index < mesh.faces.size(); ++face_index) {
+        const Face& face = mesh.faces[face_index];
+        Vec3 minimum = mesh.vertices[face.v[0]].p;
+        Vec3 maximum = minimum;
+        for (int corner = 1; corner < 3; ++corner) {
+            minimum = minimum.cwiseMin(mesh.vertices[face.v[corner]].p);
+            maximum = maximum.cwiseMax(mesh.vertices[face.v[corner]].p);
+        }
+        minimum.array() -= radius;
+        maximum.array() += radius;
+        const Eigen::Vector3i start = (minimum / cell).array().floor().cast<int>();
+        const Eigen::Vector3i stop = (maximum / cell).array().floor().cast<int>();
+        for (int x = start.x(); x <= stop.x(); ++x) {
+            for (int y = start.y(); y <= stop.y(); ++y) {
+                for (int z = start.z(); z <= stop.z(); ++z) {
+                    const std::string key = std::to_string(x) + ":" + std::to_string(y) + ":" + std::to_string(z);
+                    buckets[key].push_back(static_cast<int>(face_index));
                 }
             }
-            if (best >= 0) mesh.virtual_edges.insert(Edge(vertices[i], best));
+        }
+    }
+    std::unordered_set<std::uint64_t> tested_pairs;
+    for (const auto& [key, faces] : buckets) {
+        (void)key;
+        for (std::size_t i = 0; i < faces.size(); ++i) {
+            for (std::size_t j = i + 1; j < faces.size(); ++j) {
+                const int first_index = std::min(faces[i], faces[j]);
+                const int second_index = std::max(faces[i], faces[j]);
+                const std::uint64_t pair_key = (static_cast<std::uint64_t>(static_cast<std::uint32_t>(first_index))
+                                                << 32U) |
+                                               static_cast<std::uint32_t>(second_index);
+                if (!tested_pairs.insert(pair_key).second) continue;
+                const Face& first = mesh.faces[first_index];
+                const Face& second = mesh.faces[second_index];
+                if (components.find(first.v[0]) == components.find(second.v[0])) continue;
+                if (triangle_triangle_squared_distance(mesh, first, second) >= threshold * threshold) continue;
+                Edge closest(first.v[0], second.v[0]);
+                double closest_squared = std::numeric_limits<double>::infinity();
+                for (const int vertex_a : first.v) {
+                    for (const int vertex_b : second.v) {
+                        const double squared = (mesh.vertices[vertex_a].p - mesh.vertices[vertex_b].p).squaredNorm();
+                        if (squared < closest_squared) {
+                            closest_squared = squared;
+                            closest = Edge(vertex_a, vertex_b);
+                        }
+                    }
+                }
+                mesh.virtual_edges.insert(closest);
+            }
         }
     }
 }
@@ -379,10 +514,55 @@ static std::unordered_set<int> materials_at(const Mesh& mesh, int vertex) {
     return materials;
 }
 
+static int active_edge_incidence(const Mesh& mesh, int a, int b) {
+    const auto& first = mesh.vertices[a].faces;
+    const auto& second = mesh.vertices[b].faces;
+    const auto& smaller = first.size() <= second.size() ? first : second;
+    const auto& larger = first.size() <= second.size() ? second : first;
+    int count = 0;
+    for (const int face_index : smaller) {
+        if (larger.contains(face_index) && mesh.faces[face_index].active) ++count;
+    }
+    return count;
+}
+
+static Eigen::Matrix3d cross_matrix(const Vec3& vector) {
+    Eigen::Matrix3d matrix;
+    matrix << 0.0, -vector.z(), vector.y(), vector.z(), 0.0, -vector.x(), -vector.y(), vector.x(), 0.0;
+    return matrix;
+}
+
+static Mat4 memoryless_area_quadric(const Mesh& mesh, int a, int b) {
+    std::unordered_set<int> local_faces = mesh.vertices[a].faces;
+    local_faces.insert(mesh.vertices[b].faces.begin(), mesh.vertices[b].faces.end());
+    std::unordered_set<Edge, EdgeHash> boundary_edges;
+    for (const int face_index : local_faces) {
+        const Face& face = mesh.faces[face_index];
+        if (!face.active) continue;
+        for (int corner = 0; corner < 3; ++corner) {
+            const Edge edge(face.v[corner], face.v[(corner + 1) % 3]);
+            if (active_edge_incidence(mesh, edge.a, edge.b) == 1) boundary_edges.insert(edge);
+        }
+    }
+    Mat4 result = Mat4::Zero();
+    for (const Edge& edge : boundary_edges) {
+        const Vec3& va = mesh.vertices[edge.a].p;
+        const Vec3& vb = mesh.vertices[edge.b].p;
+        const Vec3 s = vb - va;
+        const Vec3 t = va.cross(vb);
+        Eigen::Matrix<double, 3, 4> expression;
+        expression.leftCols<3>() = cross_matrix(s);
+        expression.col(3) = t;
+        result += 0.5 * expression.transpose() * expression;
+    }
+    return result;
+}
+
 static Candidate candidate_for(const Mesh& mesh, int a, int b, const Options& options) {
     const Vertex& first = mesh.vertices[a];
     const Vertex& second = mesh.vertices[b];
-    const Mat4 quadric = first.memory_quadric + second.memory_quadric;
+    Mat4 quadric = first.memory_quadric + second.memory_quadric;
+    if (options.method == "stmw") quadric += memoryless_area_quadric(mesh, a, b);
     const Vec3 position = optimal_position(quadric, first.p, second.p);
     double cost = std::max(0.0, evaluate(quadric, position));
     if (options.method == "qem4vr") {
@@ -449,11 +629,26 @@ static bool collapse_valid(const Mesh& mesh, const Candidate& candidate) {
     return true;
 }
 
-static std::vector<int> collapse(Mesh& mesh, const Candidate& candidate) {
+static std::vector<int> collapse(
+    Mesh& mesh, const Candidate& candidate, std::vector<CollapseRecord>* history_records) {
     Vertex& keep = mesh.vertices[candidate.a];
     Vertex& remove = mesh.vertices[candidate.b];
     std::unordered_set<int> affected = keep.faces;
     affected.insert(remove.faces.begin(), remove.faces.end());
+    CollapseRecord history;
+    if (history_records != nullptr) {
+        history.before.reserve(affected.size());
+        for (const int face_index : affected) {
+            const Face& face = mesh.faces[face_index];
+            if (!face.active) continue;
+            FaceSnapshot snapshot;
+            snapshot.face = static_cast<std::uint32_t>(face_index);
+            for (int corner = 0; corner < 3; ++corner) {
+                snapshot.vertices[corner] = mesh.vertices[face.v[corner]].p;
+            }
+            history.before.push_back(std::move(snapshot));
+        }
+    }
     std::unordered_set<int> impacted{candidate.a, candidate.b};
     for (const int face_index : affected) {
         const Face& face = mesh.faces[face_index];
@@ -493,6 +688,15 @@ static std::vector<int> collapse(Mesh& mesh, const Candidate& candidate) {
             impacted.insert(vertex);
         }
     }
+    if (history_records != nullptr) {
+        history.after.reserve(affected.size());
+        for (const int face_index : affected) {
+            if (mesh.faces[face_index].active) {
+                history.after.push_back(static_cast<std::uint32_t>(face_index));
+            }
+        }
+        history_records->push_back(std::move(history));
+    }
     remove.active = false;
     remove.faces.clear();
     remove.neighbors.clear();
@@ -528,6 +732,48 @@ static std::vector<int> collapse(Mesh& mesh, const Candidate& candidate) {
         if (mesh.vertices[vertex].active) result.push_back(vertex);
     }
     return result;
+}
+
+template <typename Value>
+static void write_binary(std::ofstream& output, const Value& value) {
+    output.write(reinterpret_cast<const char*>(&value), sizeof(Value));
+}
+
+static void write_successive_map(
+    const Mesh& mesh, const std::vector<CollapseRecord>& history, const fs::path& path) {
+    fs::create_directories(path.parent_path());
+    std::ofstream output(path, std::ios::binary);
+    if (!output) throw std::runtime_error("cannot write successive map: " + path.string());
+    constexpr std::array<char, 8> magic{'F', 'Q', 'S', 'M', 'A', 'P', '1', '\0'};
+    output.write(magic.data(), static_cast<std::streamsize>(magic.size()));
+    const std::uint32_t version = 1;
+    const std::uint32_t reserved = 0;
+    const std::uint64_t record_count = history.size();
+    const std::uint64_t final_face_count = mesh.active_faces;
+    write_binary(output, version);
+    write_binary(output, reserved);
+    write_binary(output, record_count);
+    write_binary(output, final_face_count);
+    for (const CollapseRecord& record : history) {
+        const std::uint32_t before_count = static_cast<std::uint32_t>(record.before.size());
+        const std::uint32_t after_count = static_cast<std::uint32_t>(record.after.size());
+        write_binary(output, before_count);
+        write_binary(output, after_count);
+        for (const FaceSnapshot& snapshot : record.before) {
+            write_binary(output, snapshot.face);
+            for (const Vec3& point : snapshot.vertices) {
+                for (int axis = 0; axis < 3; ++axis) write_binary(output, point[axis]);
+            }
+        }
+        for (const std::uint32_t face : record.after) write_binary(output, face);
+    }
+    for (std::size_t face_index = 0; face_index < mesh.faces.size(); ++face_index) {
+        if (mesh.faces[face_index].active) {
+            const auto value = static_cast<std::uint32_t>(face_index);
+            write_binary(output, value);
+        }
+    }
+    if (!output) throw std::runtime_error("failed while writing successive map: " + path.string());
 }
 
 static void write_obj(const Mesh& mesh, const fs::path& path) {
@@ -567,6 +813,8 @@ static void simplify(Mesh& mesh, const Options& options) {
 
     std::size_t collapses = 0;
     std::size_t rejected = 0;
+    std::vector<CollapseRecord> history;
+    std::vector<CollapseRecord>* history_records = options.successive_map.empty() ? nullptr : &history;
     auto last_checkpoint = std::chrono::steady_clock::now();
     while (mesh.active_faces > options.target_faces && !queue.empty()) {
         Candidate current = queue.top();
@@ -582,7 +830,7 @@ static void simplify(Mesh& mesh, const Options& options) {
             ++rejected;
             continue;
         }
-        const std::vector<int> impacted = collapse(mesh, current);
+        const std::vector<int> impacted = collapse(mesh, current, history_records);
         ++collapses;
         for (const int vertex : impacted) {
             for (const int neighbor : mesh.vertices[vertex].neighbors) enqueue(vertex, neighbor);
@@ -604,12 +852,14 @@ static void simplify(Mesh& mesh, const Options& options) {
     std::cerr << "complete method=" << options.method << " faces=" << mesh.active_faces
               << " collapses=" << collapses << " rejected=" << rejected
               << " virtual_edges=" << mesh.virtual_edges.size() << '\n';
+    if (!options.successive_map.empty()) write_successive_map(mesh, history, options.successive_map);
 }
 
 static Options parse_options(int argc, char** argv) {
     if (argc == 2 && std::string(argv[1]) == "--help") {
         std::cout << "paper_simplify --method qem4vr|stmw --input mesh.obj --output result.obj "
-                     "--target-faces N [--checkpoint-dir DIR] [--virtual-radius R]\n";
+                     "--target-faces N [--checkpoint-dir DIR] [--virtual-radius R] "
+                     "[--successive-map FILE]\n";
         std::exit(0);
     }
     Options options;
@@ -622,6 +872,7 @@ static Options parse_options(int argc, char** argv) {
         else if (key == "--output") options.output = value;
         else if (key == "--target-faces") options.target_faces = std::stoull(value);
         else if (key == "--checkpoint-dir") options.checkpoint_dir = value;
+        else if (key == "--successive-map") options.successive_map = value;
         else if (key == "--virtual-radius") options.virtual_radius = std::stod(value);
         else if (key == "--boundary-weight") options.boundary_weight = std::stod(value);
         else if (key == "--curvature-gain") options.curvature_gain = std::stod(value);
@@ -635,6 +886,9 @@ static Options parse_options(int argc, char** argv) {
     }
     if (options.input.empty() || options.output.empty() || options.target_faces == 0) {
         throw std::runtime_error("--input, --output, and --target-faces are required");
+    }
+    if (options.method != "stmw" && !options.successive_map.empty()) {
+        throw std::runtime_error("--successive-map is only valid with --method stmw");
     }
     return options;
 }

@@ -16,6 +16,7 @@ from trimesh.visual.texture import TextureVisuals
 from .config import ExperimentConfig
 from .mesh import Transform, load_mesh, restored_vertices
 from .runner import load_run_record
+from .successive import atlas_faces_to_target_faces, load_successive_map, map_points_successively
 from .util import atomic_json, sha256_file
 
 
@@ -45,9 +46,7 @@ def _face_tangent_basis(
     return tangent, bitangent, normal
 
 
-def _vertex_tangents(
-    vertices: np.ndarray, faces: np.ndarray, uvs: np.ndarray, normals: np.ndarray
-) -> np.ndarray:
+def _vertex_tangents(vertices: np.ndarray, faces: np.ndarray, uvs: np.ndarray, normals: np.ndarray) -> np.ndarray:
     face_tangent, face_bitangent, _ = _face_tangent_basis(vertices, faces, uvs)
     tangent_sum = np.zeros_like(vertices)
     bitangent_sum = np.zeros_like(vertices)
@@ -64,9 +63,7 @@ def _vertex_tangents(
     return np.column_stack((tangent_sum, handedness)).astype(np.float32)
 
 
-def _rasterize(
-    uvs: np.ndarray, faces: np.ndarray, resolution: int
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _rasterize(uvs: np.ndarray, faces: np.ndarray, resolution: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     face_map = np.full((resolution, resolution), -1, dtype=np.int32)
     barycentric = np.zeros((resolution, resolution, 3), dtype=np.float32)
     pixel_uv = np.column_stack((uvs[:, 0] * (resolution - 1), (1.0 - uvs[:, 1]) * (resolution - 1)))
@@ -146,9 +143,7 @@ def _append_tangents(path: Path, tangents: np.ndarray) -> None:
     tangent_bytes = np.asarray(tangents, dtype="<f4").tobytes()
     if gltf.bufferViews is None or gltf.accessors is None or gltf.meshes is None or gltf.buffers is None:
         raise RuntimeError("exported GLB is missing required mesh buffers")
-    gltf.bufferViews.append(
-        BufferView(buffer=0, byteOffset=offset, byteLength=len(tangent_bytes), target=ARRAY_BUFFER)
-    )
+    gltf.bufferViews.append(BufferView(buffer=0, byteOffset=offset, byteLength=len(tangent_bytes), target=ARRAY_BUFFER))
     accessor_index = len(gltf.accessors)
     gltf.accessors.append(
         Accessor(
@@ -173,6 +168,7 @@ def bake_pbr_asset(
     center: list[float],
     diagonal: float,
     resolution: int = 2048,
+    successive_map_path: Path | None = None,
 ) -> dict[str, Any]:
     source = load_mesh(source_glb, process=False)
     source.vertices = (np.asarray(source.vertices) - np.asarray(center)) / diagonal
@@ -195,7 +191,24 @@ def bake_pbr_asset(
     weights = barycentric[rows, columns].astype(np.float64)
     target_points = np.sum(atlas_vertices_unit[atlas_faces[mapped_faces]] * weights[:, :, None], axis=1)
 
-    closest, _, source_face_ids = trimesh.proximity.closest_point(source, target_points)
+    mapping_audit: dict[str, Any]
+    if successive_map_path is not None:
+        history = load_successive_map(successive_map_path)
+        if len(history.final_face_ids) != len(target.faces):
+            raise ValueError("successive map final-face count does not match the target mesh")
+        atlas_to_target = atlas_faces_to_target_faces(np.asarray(mapping), atlas_faces, np.asarray(target.faces))
+        final_internal_faces = history.final_face_ids[atlas_to_target[mapped_faces]]
+        source_face_ids, mapping_audit = map_points_successively(history, target_points, final_internal_faces)
+        if len(source_face_ids) and int(source_face_ids.max()) >= len(source.faces):
+            raise ValueError("successive map references a face outside the source mesh")
+        source_triangles = np.asarray(source.triangles)[source_face_ids]
+        closest = trimesh.triangles.closest_point(source_triangles, target_points)
+        mapping_audit["mode"] = "stmw_successive_one_ring_projection"
+        mapping_audit["history_path"] = str(successive_map_path)
+        mapping_audit["history_sha256"] = sha256_file(successive_map_path)
+    else:
+        closest, _, source_face_ids = trimesh.proximity.closest_point(source, target_points)
+        mapping_audit = {"mode": "global_closest_surface"}
     source_triangles = np.asarray(source.triangles)[source_face_ids]
     source_barycentric = trimesh.triangles.points_to_barycentric(source_triangles, closest)
     mapped_source_uv = np.sum(
@@ -218,9 +231,7 @@ def bake_pbr_asset(
         + source_normal[source_face_ids] * sampled_normal[:, 2, None]
     )
     world_normal /= np.maximum(np.linalg.norm(world_normal, axis=1, keepdims=True), 1e-20)
-    target_tangent, target_bitangent, target_normal = _face_tangent_basis(
-        atlas_vertices_unit, atlas_faces, atlas_uv
-    )
+    target_tangent, target_bitangent, target_normal = _face_tangent_basis(atlas_vertices_unit, atlas_faces, atlas_uv)
     baked_normal = np.column_stack(
         (
             np.sum(world_normal * target_tangent[mapped_faces], axis=1),
@@ -266,6 +277,7 @@ def bake_pbr_asset(
         "output_sha256": sha256_file(output_path),
         "channels": ["base_color", "normal", "metallic_roughness", "emissive"],
         "tangents": True,
+        "mapping": mapping_audit,
     }
 
 
@@ -276,10 +288,20 @@ def rebake_run(config: ExperimentConfig, asset_run_id: str, resolution: int = 20
         raise ValueError("rebake expects an asset-track run")
     if record.get("status") != "SUCCESS" or not record.get("output_path"):
         raise ValueError(f"asset geometry is unavailable: {asset_run_id}")
-    manifest = json.loads(
-        (config.artifacts / "prepared" / "manifest.json").read_text(encoding="utf-8")
-    )
+    manifest = json.loads((config.artifacts / "prepared" / "manifest.json").read_text(encoding="utf-8"))
     output = config.artifacts / "runs" / asset_run_id / "asset-pbr.glb"
+    successive_map_path: Path | None = None
+    research_run_id = str(record.get("parameters", {}).get("research_run_id", ""))
+    if record.get("method") == "stmw" and research_run_id:
+        research = load_run_record(config.artifacts / "runs" / research_run_id / "run.json")
+        mapping_relative = research.get("parameters", {}).get("successive_mapping_path")
+        expected_hash = research.get("parameters", {}).get("successive_mapping_sha256")
+        lineage_action = record.get("repair_lineage", {}).get("action")
+        if mapping_relative and lineage_action == "not_required":
+            candidate = config.root / str(mapping_relative)
+            if sha256_file(candidate) != expected_hash:
+                raise ValueError("STMW successive mapping history hash mismatch")
+            successive_map_path = candidate
     metrics = bake_pbr_asset(
         config.source,
         config.root / record["output_path"],
@@ -287,6 +309,7 @@ def rebake_run(config: ExperimentConfig, asset_run_id: str, resolution: int = 20
         manifest["transform"]["center"],
         float(manifest["transform"]["diagonal"]),
         resolution,
+        successive_map_path,
     )
     record["output_path"] = str(output.relative_to(config.root))
     record["output_sha256"] = metrics["output_sha256"]

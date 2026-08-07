@@ -47,15 +47,11 @@ def normalization_transform(mesh: trimesh.Trimesh) -> Transform:
 
 
 def normalized_vertices(vertices: np.ndarray, transform: Transform) -> np.ndarray:
-    return (
-        np.asarray(vertices, dtype=np.float64) - np.asarray(transform.center)
-    ) / transform.diagonal
+    return (np.asarray(vertices, dtype=np.float64) - np.asarray(transform.center)) / transform.diagonal
 
 
 def restored_vertices(vertices: np.ndarray, transform: Transform) -> np.ndarray:
-    return np.asarray(vertices, dtype=np.float64) * transform.diagonal + np.asarray(
-        transform.center
-    )
+    return np.asarray(vertices, dtype=np.float64) * transform.diagonal + np.asarray(transform.center)
 
 
 def geometric_weld(
@@ -95,9 +91,7 @@ def prepare_source(source: Path, destination: Path, expected_faces: int) -> dict
     destination.mkdir(parents=True, exist_ok=True)
     raw = load_mesh(source, process=False)
     if len(raw.faces) != expected_faces:
-        raise ValueError(
-            f"source face count mismatch: expected {expected_faces}, got {len(raw.faces)}"
-        )
+        raise ValueError(f"source face count mismatch: expected {expected_faces}, got {len(raw.faces)}")
     transform = normalization_transform(raw)
     raw_vertices = normalized_vertices(raw.vertices, transform)
     geom_vertices, geom_faces, corner_to_geometry = geometric_weld(raw_vertices, raw.faces)

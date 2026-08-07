@@ -20,5 +20,28 @@ set_target_properties(paper_simplify PROPERTIES
 include(CTest)
 if(BUILD_TESTING)
     add_test(NAME paper_simplify_help COMMAND paper_simplify --help)
+    add_test(
+        NAME stmw_virtual_edge_triangle_distance
+        COMMAND paper_simplify
+            --method stmw
+            --input ${CMAKE_SOURCE_DIR}/tests/fixtures/interior_close_triangles.obj
+            --output ${CMAKE_BINARY_DIR}/stmw-interior-close.obj
+            --target-faces 1
+            --virtual-radius 0.01
+    )
+    set_tests_properties(stmw_virtual_edge_triangle_distance PROPERTIES
+        PASS_REGULAR_EXPRESSION "virtual_edges=1"
+    )
+    add_test(
+        NAME stmw_closed_mesh_has_no_virtual_edges
+        COMMAND paper_simplify
+            --method stmw
+            --input ${CMAKE_SOURCE_DIR}/tests/fixtures/octahedron.obj
+            --output ${CMAKE_BINARY_DIR}/stmw-octahedron.obj
+            --target-faces 4
+            --virtual-radius 0.01
+    )
+    set_tests_properties(stmw_closed_mesh_has_no_virtual_edges PROPERTIES
+        PASS_REGULAR_EXPRESSION "faces=4.*virtual_edges=0"
+    )
 endif()
-

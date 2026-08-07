@@ -12,7 +12,7 @@
 - Concurrent `uv run` commands raced while initializing the user-level cache on Windows. Verification commands now use the project-local `.uv-cache` and run sequentially.
 - Trimesh component splitting needs its optional `networkx` dependency on this input. It is now an explicit locked runtime dependency rather than an undeclared environment assumption.
 - QEM4VR is closed-access from this environment (ACM returned HTTP 403 and OpenAlex reports no OA copy). The first implementation exposes all non-paper numeric weights and labels them assumptions; exact defaults require a user-provided PDF or author clarification.
-- STMW's first executable checkpoint uses component-aware spatial vertex proximity for virtual-edge discovery rather than the paper's triangle-to-triangle distance. It is sufficient for the current single closed canonical geometry but not yet paper-faithful for general triangle soups.
+- STMW's first executable checkpoint used component-aware spatial vertex proximity for virtual-edge discovery. It has since been replaced by expanded-AABB candidate generation followed by exact triangle-to-triangle distance tests.
 - WSL 2 was adopted as the primary C++ build environment after the user authorized it. The minimal build toolchain is GCC 11.4, CMake, Ninja, and Eigen; Windows remains the host orchestrator.
 - QSlim 1.0 predates standard C++ headers and two-phase template lookup. The official source remains immutable; tracked compatibility headers are overlaid onto an ignored build copy. Its bundled SMF fixtures use CRLF and are normalized to LF only for the smoke test.
 - ICE's shared `src` directory includes `bake_texture.cpp`, which unnecessarily depends on Polyscope's stb layout. The headless adapter excludes that unrelated translation unit while compiling every coarsening-core source unchanged.
@@ -23,6 +23,10 @@
 - The foreground shell wrapper timed out at 600 seconds during the real QEM4VR 50% run, but its Python/WSL child remained alive and continued writing five-minute checkpoints. Future long runs need a persistent queue or an explicit detached-run command rather than a foreground tool timeout.
 - The user clarified that the supported repair environment is `E:/skills/asset_pipeline_tools_v2/.venv`. Its doctor reports Light and Manifold available; the redundant project-local repair environment is ignored and is not used by the harness.
 - QEM 50% repair produced no candidate that passed all hard constraints. Light retained open/non-manifold defects, Manifold rejected a component, and the four remaining backends were unavailable; the asset result is correctly `REPAIR_FAILED` with a debug candidate retained.
+- The original QEM4VR/STMW collapse loop rebuilt global connectivity after every collapse and projected the 50% run into hours. Incremental one-ring face/neighbor updates reduced the same target to seconds; the abandoned partial run is preserved under `artifacts/aborted`.
+- CWF's first real one-iteration probe produced 82,814 faces after roughly 20 minutes end-to-end and exposed non-manifold output on this input. The formal 50-iteration run is therefore isolated in a detached process and its native topology will be reported without repair-induced masking.
+- STMW now recomputes its boundary-edge area quadric per candidate without accumulating it, and discovers virtual edges with exact triangle-to-triangle distance inside an expanded-AABB hash. A regression fixture covers overlapping projected triangle interiors whose vertex pairs are all outside the virtual radius.
+- STMW texture transfer now records a versioned binary collapse lineage containing pre-collapse edge one-rings and post-collapse vertex one-rings. The asset baker traverses only relevant records in reverse, projects into each saved local one-ring, and reuses the final texel position throughout the traversal.
 
 ## Questions for review
 

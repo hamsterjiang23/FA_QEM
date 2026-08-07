@@ -12,6 +12,7 @@ from trimesh.sample import sample_surface
 
 from ..mesh import load_mesh
 from ..process import ProcessResult, run_measured
+from ..util import sha256_file
 
 
 @dataclass(frozen=True)
@@ -127,6 +128,7 @@ class PaperExecutableAdapter(ExecutableAdapter):
         prefix, runtime = self._command_prefix(context.root)
         if not prefix:
             raise RuntimeError("paper simplifier executable is unavailable")
+
         def native(path: Path) -> str:
             return self._wsl_path(path) if runtime == "wsl2" else str(path)
 
@@ -143,9 +145,22 @@ class PaperExecutableAdapter(ExecutableAdapter):
             "--checkpoint-dir",
             native(context.run_dir / "checkpoints"),
         ]
+        successive_map = context.run_dir / "successive-map.bin"
+        if self.name == "stmw":
+            command.extend(["--successive-map", native(successive_map)])
         measured = self.measured(command, context)
         if measured.returncode != 0:
             raise RuntimeError(f"{self.name} exited with {measured.returncode}")
+        parameters = dict(context.parameters)
+        if self.name == "stmw":
+            if not successive_map.is_file():
+                raise RuntimeError("STMW did not produce its successive mapping history")
+            parameters.update(
+                {
+                    "successive_mapping_path": str(successive_map.relative_to(context.root)),
+                    "successive_mapping_sha256": sha256_file(successive_map),
+                }
+            )
         return AdapterResult(
             output=output,
             source=self.source,
@@ -156,7 +171,7 @@ class PaperExecutableAdapter(ExecutableAdapter):
                 "peak_rss_bytes": measured.peak_rss_bytes,
                 "repetitions": 1,
             },
-            parameters=context.parameters,
+            parameters=parameters,
         )
 
 
@@ -167,7 +182,7 @@ class QEM4VRAdapter(PaperExecutableAdapter):
 
 class STMWAdapter(PaperExecutableAdapter):
     name = "stmw"
-    source = "partial paper-guided local reimplementation; known gaps disclosed"
+    source = "paper-guided local reimplementation; radius assumption disclosed"
 
 
 class ExternalTemplateAdapter(ExecutableAdapter):
@@ -180,9 +195,7 @@ class ExternalTemplateAdapter(ExecutableAdapter):
 
 class RobustLPMAdapter(ExternalTemplateAdapter):
     name = "robustlpm"
-    executable_relative = (
-        Path("external") / "robustlpm" / "RoLoPM_EXE" / "SurfaceRemeshingCli_bin.exe"
-    )
+    executable_relative = Path("external") / "robustlpm" / "RoLoPM_EXE" / "SurfaceRemeshingCli_bin.exe"
 
     def run(self, context: AdapterContext) -> AdapterResult:
         executable = self.executable(context.root)

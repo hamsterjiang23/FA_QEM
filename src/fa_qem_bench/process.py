@@ -19,9 +19,7 @@ class ProcessResult:
     stderr_path: Path
 
 
-def run_measured(
-    command: list[str], cwd: Path, log_dir: Path, timeout: float | None = None
-) -> ProcessResult:
+def run_measured(command: list[str], cwd: Path, log_dir: Path, timeout: float | None = None) -> ProcessResult:
     log_dir.mkdir(parents=True, exist_ok=True)
     stdout_path = log_dir / "stdout.log"
     stderr_path = log_dir / "stderr.log"

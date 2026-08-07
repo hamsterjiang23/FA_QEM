@@ -130,9 +130,7 @@ def repair_run(config: ExperimentConfig, research_run_id: str) -> dict[str, Any]
         "selected_candidate": metrics.get("selected_candidate"),
         "selected_sha256": metrics.get("selected_sha256"),
         "debug_candidate": debug_name,
-        "debug_path": (
-            str(debug_path.relative_to(config.root)) if debug_path and debug_path.is_file() else None
-        ),
+        "debug_path": (str(debug_path.relative_to(config.root)) if debug_path and debug_path.is_file() else None),
         "failed_constraints": metrics.get("failed_constraints", []),
     }
     if selected:

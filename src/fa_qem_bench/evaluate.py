@@ -20,9 +20,7 @@ def _closest_distances(mesh: trimesh.Trimesh, points: np.ndarray) -> np.ndarray:
     return np.asarray(distances, dtype=np.float64)
 
 
-def geometry_metrics(
-    reference: trimesh.Trimesh, result: trimesh.Trimesh, count: int, seed: int
-) -> dict[str, float]:
+def geometry_metrics(reference: trimesh.Trimesh, result: trimesh.Trimesh, count: int, seed: int) -> dict[str, float]:
     reference_points = _sample(reference, count, seed)
     result_points = _sample(result, count, seed + 1)
     result_to_reference = _closest_distances(reference, result_points)
@@ -40,9 +38,7 @@ def geometry_metrics(
     }
 
 
-def _colors_at_surface_points(
-    mesh: trimesh.Trimesh, points: np.ndarray, face_ids: np.ndarray
-) -> np.ndarray:
+def _colors_at_surface_points(mesh: trimesh.Trimesh, points: np.ndarray, face_ids: np.ndarray) -> np.ndarray:
     visual = cast(Any, mesh.visual)
     material = cast(Any, visual.material)
     if getattr(visual, "uv", None) is None or getattr(material, "baseColorTexture", None) is None:
@@ -58,9 +54,7 @@ def _colors_at_surface_points(
     return np.clip(colors * factor, 0.0, 1.0)
 
 
-def texture_metrics(
-    reference: trimesh.Trimesh, result: trimesh.Trimesh, count: int, seed: int
-) -> dict[str, Any]:
+def texture_metrics(reference: trimesh.Trimesh, result: trimesh.Trimesh, count: int, seed: int) -> dict[str, Any]:
     reference_sample = trimesh.sample.sample_surface(reference, count, seed=seed)
     result_sample = trimesh.sample.sample_surface(result, count, seed=seed + 1)
     reference_points = np.asarray(reference_sample[0], dtype=np.float64)
@@ -72,18 +66,14 @@ def texture_metrics(
 
     closest_reference, _, closest_reference_faces = trimesh.proximity.closest_point(reference, result_points)
     closest_result, _, closest_result_faces = trimesh.proximity.closest_point(result, reference_points)
-    paired_reference_colors = _colors_at_surface_points(
-        reference, closest_reference, closest_reference_faces
-    )
+    paired_reference_colors = _colors_at_surface_points(reference, closest_reference, closest_reference_faces)
     paired_result_colors = _colors_at_surface_points(result, closest_result, closest_result_faces)
     result_to_reference = np.linalg.norm(result_colors - paired_reference_colors, axis=1)
     reference_to_result = np.linalg.norm(reference_colors - paired_result_colors, axis=1)
     return {
         "status": "evaluated",
         "samples_per_direction": count,
-        "symmetric_mean_rgb_l2": float(
-            0.5 * (np.mean(result_to_reference) + np.mean(reference_to_result))
-        ),
+        "symmetric_mean_rgb_l2": float(0.5 * (np.mean(result_to_reference) + np.mean(reference_to_result))),
         "mean_rgb_l2_result_to_reference": float(np.mean(result_to_reference)),
         "mean_rgb_l2_reference_to_result": float(np.mean(reference_to_result)),
     }
@@ -124,9 +114,7 @@ def evaluate_paths(
     if input_is_normalized:
         topology["geometry_view"] = topology["attribute_view"]
     else:
-        welded_vertices, welded_faces, _ = geometric_weld(
-            np.asarray(result.vertices), np.asarray(result.faces)
-        )
+        welded_vertices, welded_faces, _ = geometric_weld(np.asarray(result.vertices), np.asarray(result.faces))
         topology["geometry_view"] = mesh_topology(
             trimesh.Trimesh(vertices=welded_vertices, faces=welded_faces, process=False)
         )

@@ -24,9 +24,11 @@ Implemented semantics:
 - Closed-manifold inputs contain no area/virtual augmentation and therefore use the same QEM objective.
 - Local face-flip rejection is enabled for the benchmark's canonical manifold input.
 
-Known implementation gap:
+Implementation details and disclosed assumption:
 
-- The first executable checkpoint uses a component-aware spatial vertex proxy for virtual-edge discovery. The paper's exact triangle-to-triangle distance construction and per-collapse local successive texture projection remain required before this adapter can be labeled paper-faithful on general triangle soups. The current benchmark model's welded scientific geometry is a single closed component, so this gap does not affect its geometry-only STMW objective.
+- The executable uses exact triangle-to-triangle distance tests inside an expanded-AABB spatial hash to create virtual edges between the closest vertex pairs of different components. It uses memory edge quadrics and recomputes the boundary-edge area quadric for every candidate without accumulating it across collapses.
+- Every collapse writes the pre-collapse edge one-ring triangle snapshots and post-collapse vertex one-ring face identifiers to a versioned binary lineage. During rebaking, texels are mapped backwards only through histories containing their current face, closest-point projection is restricted to the saved pre-collapse one-ring, and the original target-space texel position is reused at every level as specified in section 4.3.1 and appendix C.2.
+- The virtual-edge radius defaults to 1% of the unit bounding-box diagonal because the paper does not publish a numeric radius. The benchmark model's welded scientific geometry is a single closed component, so this assumption does not affect its geometry-only STMW result.
 
 ## ICE export semantics
 
