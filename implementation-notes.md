@@ -39,6 +39,7 @@
 - The CWF compatibility monitor can be folded into a completed run with `recover-resources`; a late-started monitor explicitly marks peak RSS as a lower bound instead of presenting it as a complete-process maximum.
 - RobustLPM 50% exposed stricter degeneracy/non-manifold failures in the external repair inspector than in the internal welded topology summary. Repair eligibility now treats either hard gate as authoritative, preventing a false `not_required` asset result.
 - Report contact sheets were initially cached only by filename, so rerunning a baseline could leave a stale render. Report generation now deterministically redraws every available output before writing the summary.
+- The first full contact-sheet rebuild exceeded 11 minutes because per-face pixel-grid allocation scales badly on RobustLPM's extreme-aspect triangles. Preview rendering now uses depth-sorted polygon drawing with face-centroid texture sampling; quantitative texture metrics remain unchanged and use surface samples.
 
 ## Questions for review
 

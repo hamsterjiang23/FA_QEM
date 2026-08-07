@@ -41,56 +41,35 @@ def render_mesh(
     vertices = np.asarray(mesh.vertices, dtype=np.float64)
     faces = np.asarray(mesh.faces, dtype=np.int64)
     screen, _, viewed = _screen_coordinates(vertices, resolution)
-    zbuffer = np.full((resolution, resolution), -np.inf, dtype=np.float64)
-    canvas = np.full((resolution, resolution, 3), 245.0, dtype=np.float32)
+    canvas = Image.new("RGB", (resolution, resolution), (245, 245, 245))
+    draw = ImageDraw.Draw(canvas)
     face_normals = np.cross(viewed[faces[:, 1]] - viewed[faces[:, 0]], viewed[faces[:, 2]] - viewed[faces[:, 0]])
     face_normals /= np.maximum(np.linalg.norm(face_normals, axis=1, keepdims=True), 1e-20)
     light = np.array([-0.25, -0.35, 0.9])
     light /= np.linalg.norm(light)
     shade = 0.25 + 0.75 * np.abs(face_normals @ light)
-    uvs: np.ndarray | None = None
-    texture = None
+    colors = np.repeat(np.array([[174.0, 181.0, 188.0]]), len(faces), axis=0) * shade[:, None]
     if textured:
         visual = cast(Any, mesh.visual)
         material = cast(Any, getattr(visual, "material", None))
         if getattr(visual, "uv", None) is not None and getattr(material, "baseColorTexture", None) is not None:
             uvs = np.asarray(visual.uv, dtype=np.float64)
-            texture = material.baseColorTexture
+            centroid_uv = np.mean(uvs[faces], axis=1)
+            colors = _sample_image(material.baseColorTexture, centroid_uv) * 255.0 * (0.45 + 0.55 * shade[:, None])
 
-    for face_id, face in enumerate(faces):
-        triangle = screen[face]
-        minimum = np.maximum(np.floor(triangle[:, :2].min(axis=0)).astype(int), 0)
-        maximum = np.minimum(np.ceil(triangle[:, :2].max(axis=0)).astype(int), resolution - 1)
-        if np.any(maximum < minimum):
-            continue
-        x = np.arange(minimum[0], maximum[0] + 1, dtype=np.float64) + 0.5
-        y = np.arange(minimum[1], maximum[1] + 1, dtype=np.float64) + 0.5
-        xx, yy = np.meshgrid(x, y)
-        p0, p1, p2 = triangle[:, :2]
-        denominator = (p1[1] - p2[1]) * (p0[0] - p2[0]) + (p2[0] - p1[0]) * (p0[1] - p2[1])
-        if abs(denominator) <= 1e-20:
-            continue
-        w0 = ((p1[1] - p2[1]) * (xx - p2[0]) + (p2[0] - p1[0]) * (yy - p2[1])) / denominator
-        w1 = ((p2[1] - p0[1]) * (xx - p2[0]) + (p0[0] - p2[0]) * (yy - p2[1])) / denominator
-        w2 = 1.0 - w0 - w1
-        inside = (w0 >= -1e-6) & (w1 >= -1e-6) & (w2 >= -1e-6)
-        depth = w0 * triangle[0, 2] + w1 * triangle[1, 2] + w2 * triangle[2, 2]
-        rows = slice(minimum[1], maximum[1] + 1)
-        columns = slice(minimum[0], maximum[0] + 1)
-        local_depth = zbuffer[rows, columns]
-        write = inside & (depth > local_depth)
-        if not np.any(write):
-            continue
-        local_depth[write] = depth[write]
-        local_canvas = canvas[rows, columns]
-        if uvs is not None and texture is not None:
-            weights = np.column_stack((w0[write], w1[write], w2[write]))
-            pixel_uv = np.sum(uvs[face] * weights[:, :, None], axis=1)
-            color = _sample_image(texture, pixel_uv) * 255.0 * (0.45 + 0.55 * shade[face_id])
-            local_canvas[write] = color
-        else:
-            local_canvas[write] = np.array([174.0, 181.0, 188.0]) * shade[face_id]
-    return Image.fromarray(np.clip(np.rint(canvas), 0, 255).astype(np.uint8), mode="RGB")
+    triangles = screen[faces]
+    visible = (
+        (triangles[:, :, 0].max(axis=1) >= 0)
+        & (triangles[:, :, 0].min(axis=1) < resolution)
+        & (triangles[:, :, 1].max(axis=1) >= 0)
+        & (triangles[:, :, 1].min(axis=1) < resolution)
+    )
+    depth_order = np.argsort(np.mean(triangles[:, :, 2], axis=1))
+    for face_id in depth_order[visible[depth_order]]:
+        polygon = [tuple(point) for point in triangles[face_id, :, :2]]
+        color = tuple(int(value) for value in np.clip(np.rint(colors[face_id]), 0, 255))
+        draw.polygon(polygon, fill=color)
+    return canvas
 
 
 def render_contact_sheet(
@@ -116,4 +95,9 @@ def render_contact_sheet(
     draw.text((resolution + 10, 10), f"{label} | PBR/base color", fill="black")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     sheet.save(output_path)
-    return {"path": str(output_path), "width": sheet.width, "height": sheet.height}
+    return {
+        "path": str(output_path),
+        "width": sheet.width,
+        "height": sheet.height,
+        "renderer": "depth-sorted face-centroid preview",
+    }
