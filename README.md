@@ -24,6 +24,50 @@ uv run pytest
 
 `fa-qem` is the evaluated target method and is intentionally excluded from the fixed six-baseline sweep/audit count. Its paper-to-code mapping and disclosed assumptions are documented in [docs/fa-qem-implementation-spec.md](docs/fa-qem-implementation-spec.md).
 
+## Implementation fidelity and limitations
+
+No benchmark path is a toy, mock, placeholder, or precomputed-output shim. Each
+run invokes either an author-provided implementation or a native simplifier that
+performs the complete priority-queue/collapse loop and writes a measured result.
+This does **not** mean that every method is an exact reproduction of the authors'
+unpublished implementation:
+
+| Method | Implementation provenance | Fidelity limitation |
+|---|---|---|
+| QEM | Official public-domain QSlim 1.0 source | The original source is kept algorithmically unchanged; tracked compatibility headers only make it build on modern compilers. |
+| RobustLPM | Official author-distributed Windows executable | The method is authoritative but black-box; its internals cannot be independently audited or redistributed. |
+| CWF | Official repository at the locked commit | The WSL build applies a tracked GCC compatibility patch that renames a symbol and fixes an output path; the optimization core is otherwise unchanged. |
+| ICE | Official coarsening core with a local non-interactive CLI | The exported OBJ is the official example's retained-position visualization geometry and does not realize intrinsic edge lengths as an exact Euclidean embedding. |
+| QEM4VR | Clean-room, paper-guided local implementation | No currently available official code exists for cross-validation. The implementation covers geometry, curvature boundaries, subset placement, UVs, normals, materials, and attribute transfer, but has no independent vertex-color channel; it must not be labeled an exact author implementation. |
+| STMW | Paper-guided local implementation | The paper does not publish a numeric virtual-edge radius, so the harness discloses a 1%-of-diagonal assumption. Successive mapping and texture baking use the repository's documented local interchange/adaptation rather than author code. |
+| FA-QEM | Paper-guided local implementation | The paper and public project do not provide algorithm source. UV-penalty placement, vertex-normal estimation, boundary-neighbor ordering, and appearance transfer require disclosed choices; manifold inputs additionally retain a link-condition safeguard discovered during validation. |
+
+Therefore, QEM, RobustLPM, and CWF are official/reference executions; ICE uses
+the official algorithm core with an export caveat; QEM4VR, STMW, and FA-QEM are
+real research implementations but are reported as `paper-guided local
+reimplementation`, not as bit-for-bit author reproductions. Detailed mappings
+and assumptions are in
+[docs/paper-implementation-spec.md](docs/paper-implementation-spec.md) and
+[docs/fa-qem-implementation-spec.md](docs/fa-qem-implementation-spec.md).
+
+Additional experimental limitations:
+
+- The six-baseline headline experiment covers one local source asset at three
+  face ratios; it does not reproduce every dataset or aggregate table from the
+  original papers.
+- The FA-QEM Thingi10K study is a deterministic 16-model independent
+  validation/holdout reproduction because the paper does not publish its exact
+  model list or sufficient metric-scaling detail for a model-for-model Table 2
+  reconstruction.
+- External inspection did not evaluate self-intersections in this run. A
+  `not_evaluated` field must not be interpreted as zero self-intersections.
+- Large meshes, textures, intermediate RVD files, binaries, and run logs remain
+  outside Git. The repository tracks their versions, hashes, commands, and
+  provenance so the local audit package can be verified or regenerated.
+
+The completed results and acceptance evidence are summarized in
+[docs/final-acceptance-report.md](docs/final-acceptance-report.md).
+
 The `sweep` command executes each source ratio independently, evaluates the
 research output, creates an explicit asset-track result even when the research
 run fails, conditionally repairs, bakes the common PBR asset, and rebuilds the
