@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import ExperimentConfig
-from .render import render_contact_sheet
+from .render import load_base_color_source, render_contact_sheet
 from .util import atomic_json
 
 
@@ -25,23 +25,41 @@ def build_report(config: ExperimentConfig) -> Path:
     report_dir = config.artifacts / "report"
     report_dir.mkdir(parents=True, exist_ok=True)
     manifest = json.loads((config.artifacts / "prepared" / "manifest.json").read_text(encoding="utf-8"))
+    base_color_source = load_base_color_source(
+        config.source,
+        manifest["transform"]["center"],
+        float(manifest["transform"]["diagonal"]),
+        config.source_base_color,
+    )
     for record in records:
         output = record.get("output_path")
+        render_input_kind = "run_output"
+        render_label = str(record["run_id"])
+        if not output:
+            debug_path = record.get("repair_lineage", {}).get("debug_path")
+            if debug_path and (config.root / debug_path).is_file():
+                output = debug_path
+                render_input_kind = "failed_repair_debug_candidate"
+                render_label = f"{record['run_id']} [REPAIR_FAILED debug]"
         if not output:
             record["contact_sheet"] = ""
             continue
         render_path = report_dir / "renders" / f"{record['run_id']}.png"
         try:
-            render_contact_sheet(
+            render_metadata = render_contact_sheet(
                 config.root / output,
                 render_path,
                 manifest["transform"]["center"],
                 float(manifest["transform"]["diagonal"]),
                 coordinates_are_normalized=record.get("track") == "research",
-                label=str(record["run_id"]),
+                label=render_label,
                 resolution=384,
+                base_color_source=base_color_source,
             )
+            render_metadata["input_kind"] = render_input_kind
+            render_metadata["input_path"] = str(output)
             record["contact_sheet"] = str(render_path.relative_to(report_dir)).replace("\\", "/")
+            record["contact_sheet_metadata"] = render_metadata
         except Exception as error:
             record["contact_sheet"] = ""
             record["render_error"] = f"{type(error).__name__}: {error}"
@@ -74,6 +92,8 @@ def build_report(config: ExperimentConfig) -> Path:
         "minimum_angle_degrees",
         "aspect_ratio_p95",
         "aspect_ratio_maximum",
+        "preview_base_color_mode",
+        "preview_input_kind",
         "contact_sheet",
     ]
     with (report_dir / "summary.csv").open("w", encoding="utf-8", newline="") as stream:
@@ -111,6 +131,8 @@ def build_report(config: ExperimentConfig) -> Path:
                     "minimum_angle_degrees": quality.get("minimum_angle_degrees"),
                     "aspect_ratio_p95": quality.get("aspect_ratio_p95"),
                     "aspect_ratio_maximum": quality.get("aspect_ratio_maximum"),
+                    "preview_base_color_mode": record.get("contact_sheet_metadata", {}).get("base_color_mode"),
+                    "preview_input_kind": record.get("contact_sheet_metadata", {}).get("input_kind"),
                 }
             )
             writer.writerow(row)
@@ -138,6 +160,8 @@ def build_report(config: ExperimentConfig) -> Path:
         row["self_intersection_pairs"] = intersections.get("pair_count", "")
         for key in ("minimum_angle_degrees", "aspect_ratio_p95", "aspect_ratio_maximum"):
             row[key] = quality.get(key, "")
+        row["preview_base_color_mode"] = record.get("contact_sheet_metadata", {}).get("base_color_mode", "")
+        row["preview_input_kind"] = record.get("contact_sheet_metadata", {}).get("input_kind", "")
         cells = []
         for key in columns:
             value = row[key]
@@ -149,14 +173,14 @@ def build_report(config: ExperimentConfig) -> Path:
         rows_list.append("<tr>" + "".join(cells) + "</tr>")
     rows = "\n".join(rows_list)
     html_text = f"""<!doctype html>
-<html><head><meta charset=\"utf-8\"><title>FA-QEM Baselines</title>
+<html><head><meta charset=\"utf-8\"><title>FA-QEM Mesh Simplification Audit</title>
 <style>
 body{{font-family:system-ui;margin:2rem}}
 table{{border-collapse:collapse;font-size:12px}}
 td,th{{border:1px solid #aaa;padding:.4rem}}
 th{{position:sticky;top:0;background:white}}
 </style>
-</head><body><h1>FA-QEM six-baseline audit</h1><table><thead><tr>
+</head><body><h1>FA-QEM mesh simplification audit: six baselines plus FA-QEM</h1><table><thead><tr>
 {"".join(f"<th>{key}</th>" for key in columns)}</tr></thead><tbody>{rows}</tbody></table></body></html>"""
     (report_dir / "index.html").write_text(html_text, encoding="utf-8")
     return report_dir / "index.html"

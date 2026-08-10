@@ -10,6 +10,7 @@ def test_config_targets() -> None:
     assert config.target("0.5") == 82470
     assert config.target("0.1") == 16494
     assert config.target("0.01") == 1649
+    assert config.source_base_color == Path("Test_Model/deliverty/textures/basecolor.png").resolve()
 
 
 def test_config_rejects_unknown_ratio() -> None:

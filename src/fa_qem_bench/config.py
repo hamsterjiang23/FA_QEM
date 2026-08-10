@@ -25,6 +25,11 @@ class ExperimentConfig:
         return (self.root / str(self.data["source"]["path"])).resolve()
 
     @property
+    def source_base_color(self) -> Path | None:
+        value = self.data["source"].get("base_color_path")
+        return (self.root / str(value)).resolve() if value else None
+
+    @property
     def artifacts(self) -> Path:
         return self.root / "artifacts"
 
@@ -70,6 +75,18 @@ def validate_config(config: ExperimentConfig) -> None:
     expected_hash = str(config.data["source"]["sha256"]).lower()
     if actual_hash != expected_hash:
         raise ValueError(f"source SHA-256 mismatch: expected {expected_hash}, got {actual_hash}")
+    if config.source_base_color is not None:
+        if not config.source_base_color.is_file():
+            raise FileNotFoundError(config.source_base_color)
+        actual_base_color_hash = sha256_file(config.source_base_color)
+        expected_base_color_hash = str(config.data["source"].get("base_color_sha256", "")).lower()
+        if not expected_base_color_hash:
+            raise ValueError("source.base_color_sha256 is required when source.base_color_path is set")
+        if actual_base_color_hash != expected_base_color_hash:
+            raise ValueError(
+                "source base-color SHA-256 mismatch: "
+                f"expected {expected_base_color_hash}, got {actual_base_color_hash}"
+            )
     methods = tuple(config.data.get("methods", ()))
     if methods != SUPPORTED_METHODS:
         raise ValueError(f"methods must be exactly {SUPPORTED_METHODS}")

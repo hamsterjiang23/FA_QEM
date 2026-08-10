@@ -1,6 +1,7 @@
 # FA-QEM 六项 Baseline 最终验收报告
 
 验收日期：2026-08-08  
+预览纹理修订：2026-08-10
 源模型：`Test_Model/curved-lantern-balustrade-final.glb`  
 源模型 SHA-256：`0be9c425a2c3cc2fe7ece2a6fe4c7fa8ef44879d94403e4cdb6f849bc6f891d2`
 
@@ -22,6 +23,14 @@ uv run fa-qem-bench --config experiment.yaml audit
 ```
 
 大体积实验资产位于被 Git 忽略的 `artifacts/`，本报告保存可审计结论、关键指标、状态和复现入口；完整资产可由已记录的配置、哈希和命令重新生成。
+
+### 预览纹理修正与覆盖
+
+源模型的正确 base color 已明确锁定为 `Test_Model/deliverty/textures/basecolor.png`（4096×4096，SHA-256 `4e45bf43bbf13615da2450a69945e0bbb956f767a58002ca21d52a13bad37e73`）。此前科研轨 OBJ 缺少可加载材质时，报告右栏会回退成灰色，却仍固定标为 `PBR/base color`；该标签与回退行为现已修正。
+
+当前报告为六项 baseline 的 36 条记录和 FA-QEM 的 6 条本地记录全部生成 contact sheet，共 42/42 张，0 个渲染错误且没有灰色纹理回退：13 张读取资产内嵌 base color，6 张使用科研输出原 UV 配合上述源纹理，23 张通过最近源表面投影显示同一 base color。其中 8 张来自 `REPAIR_FAILED` 记录保留的最佳调试候选，图片标题和汇总字段均明确标为失败调试候选，不代表资产轨成功。
+
+本次修订只改变报告预览和预览来源元数据，不改变任何简化几何、运行状态、计时、几何误差或纹理评价指标。
 
 ## 2. Baseline 状态矩阵
 
@@ -95,10 +104,11 @@ FA-QEM 是论文指导的本地复现，不是作者官方代码。实现规格�
 | 完整审计 | 36/36 records，0 missing，0 errors，28 outputs |
 | WSL native build | `ninja: no work to do`，构建成功 |
 | CTest | 7/7 passed |
-| pytest | 24/24 passed |
+| pytest | 26/26 passed |
 | Ruff | passed |
 | BasedPyright | 0 errors，0 warnings |
 | QEM consistency | `SUCCESS`；100,000 samples；Hausdorff 相对差 0.000298；Chamfer 相对差 0.003249 |
+| 预览完整性 | 42/42 contact sheets；0 render errors；0 gray fallbacks |
 | Git | 核心源码工作树干净；`origin/main` 已同步 |
 
 ## 8. 已知限制与警告

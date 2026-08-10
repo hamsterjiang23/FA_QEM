@@ -2,6 +2,8 @@ schema_version: 1
 source:
   path: Test_Model/curved-lantern-balustrade-final.glb
   sha256: 0be9c425a2c3cc2fe7ece2a6fe4c7fa8ef44879d94403e4cdb6f849bc6f891d2
+  base_color_path: Test_Model/deliverty/textures/basecolor.png
+  base_color_sha256: 4e45bf43bbf13615da2450a69945e0bbb956f767a58002ca21d52a13bad37e73
   expected_faces: 164940
 targets:
   "0.5": 82470
@@ -37,4 +39,3 @@ timing:
   warmup_runs: 1
   repeats_under_seconds: 3
   slow_threshold_seconds: 3600
-

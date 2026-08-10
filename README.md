@@ -65,6 +65,19 @@ Additional experimental limitations:
   outside Git. The repository tracks their versions, hashes, commands, and
   provenance so the local audit package can be verified or regenerated.
 
+Report-preview provenance:
+
+- The source base color is pinned in `experiment.yaml` to the original 4096px
+  `Test_Model/deliverty/textures/basecolor.png` with its SHA-256. A report build
+  fails validation if that file changes.
+- A right-hand preview uses an embedded base-color texture when available,
+  otherwise it uses the native UVs with the pinned source image or projects the
+  source image from the nearest source surface. This display-only projection
+  does not change native geometry or texture metrics.
+- `REPAIR_FAILED` asset records render their retained best debug candidate only
+  for diagnosis. Both the image header and report metadata label that input as
+  a failed-repair debug candidate; it is not a successful compatible asset.
+
 The completed results and acceptance evidence are summarized in
 [docs/final-acceptance-report.md](docs/final-acceptance-report.md).
 
