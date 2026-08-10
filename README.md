@@ -81,8 +81,9 @@ Report-preview provenance:
 The completed results and acceptance evidence are summarized in
 [docs/final-acceptance-report.md](docs/final-acceptance-report.md).
 The seven-method visual comparisons and key-metric tables are available for
-[50%](docs/ratio-0p5-seven-method-summary.md) and
-[10%](docs/ratio-0p1-seven-method-summary.md).
+[50%](docs/ratio-0p5-seven-method-summary.md),
+[10%](docs/ratio-0p1-seven-method-summary.md), and
+[1%](docs/ratio-0p01-seven-method-summary.md).
 
 The `sweep` command executes each source ratio independently, evaluates the
 research output, creates an explicit asset-track result even when the research

@@ -226,7 +226,7 @@ def build_markdown(
         else:
             rgb_text = "—"
         rows.append(
-            f"| {display_name} | {actual_faces:,} | {deviation:.3f}% | {hausdorff_text} | "
+            f"| {display_name} | {research['status']} | {actual_faces:,} | {deviation:.3f}% | {hausdorff_text} | "
             f"{chamfer_text} | {wall_text} | {topology_text} | {asset['status']} | {rgb_text} |"
         )
     content = f"""# Ratio {ratio}：七种网格简化方法汇总
@@ -235,8 +235,8 @@ def build_markdown(
 
 ## 关键指标
 
-| 方法 | 实际面数 | 目标偏差 | H ↓ | C ↓ | Wall time (s) ↓ | 科研轨拓扑 | 资产轨状态 | RGB L2 ↓ |
-|---|---:|---:|---:|---:|---:|---|---|---:|
+| 方法 | 科研轨状态 | 实际面数 | 目标偏差 | H ↓ | C ↓ | Wall time (s) ↓ | 科研轨拓扑 | 资产轨状态 | RGB L2 ↓ |
+|---|---|---:|---:|---:|---:|---:|---|---|---:|
 """ + "\n".join(rows) + (
         "\n\n指标口径：`H` 为单位包围盒对角线坐标下的双向 sampled Hausdorff；"
         f"`C` 为 mean-squared symmetric Chamfer；几何指标和时间来自 {percent} 科研轨，"
