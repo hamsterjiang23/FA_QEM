@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 from typing import Any
@@ -9,9 +10,11 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 ROOT = Path(__file__).resolve().parents[1]
 REPORT = ROOT / "artifacts" / "report"
-OUTPUT_IMAGE = ROOT / "docs" / "assets" / "ratio-0p5-seven-methods.png"
-OUTPUT_MARKDOWN = ROOT / "docs" / "ratio-0p5-seven-method-summary.md"
-TARGET_FACES = 82_470
+RATIO_CONFIG = {
+    "0.5": {"target_faces": 82_470, "slug": "0p5", "percent": "50%"},
+    "0.1": {"target_faces": 16_494, "slug": "0p1", "percent": "10%"},
+    "0.01": {"target_faces": 1_649, "slug": "0p01", "percent": "1%"},
+}
 METHODS = (
     ("qem", "QEM"),
     ("qem4vr", "QEM4VR"),
@@ -65,14 +68,23 @@ def _fit_panel(panel: Image.Image, size: tuple[int, int]) -> Image.Image:
     return canvas
 
 
-def _collect_records() -> tuple[list[dict[str, Any]], dict[tuple[str, str], dict[str, Any]]]:
+def _collect_records(ratio: str) -> tuple[list[dict[str, Any]], dict[tuple[str, str], dict[str, Any]]]:
     records = json.loads((REPORT / "summary.json").read_text(encoding="utf-8"))
-    indexed = {(str(record["method"]), str(record["track"])): record for record in records if record["ratio"] == "0.5"}
+    indexed = {
+        (str(record["method"]), str(record["track"])): record
+        for record in records
+        if record["ratio"] == ratio
+    }
     research = [indexed[(method, "research")] for method, _ in METHODS]
     return research, indexed
 
 
-def build_figure(records: list[dict[str, Any]]) -> None:
+def build_figure(
+    records: list[dict[str, Any]],
+    ratio: str,
+    percent: str,
+    output_image: Path,
+) -> None:
     margin = 36
     title_height = 70
     header_height = 54
@@ -92,7 +104,7 @@ def build_figure(records: list[dict[str, Any]]) -> None:
     _centered_text(
         draw,
         (margin, margin, margin + grid_width, margin + title_height),
-        "Ratio 0.5：七种网格简化方法预览",
+        f"Ratio {ratio}：七种网格简化方法预览",
         title_font,
     )
     grid_top = margin + title_height
@@ -139,11 +151,11 @@ def build_figure(records: list[dict[str, Any]]) -> None:
     _centered_text(
         draw,
         (margin, grid_bottom, margin + grid_width, grid_bottom + footer_height),
-        "统一使用 50% 科研轨几何；右栏显示锁定源纹理或对应的源表面投影。",
+        f"统一使用 {percent} 科研轨几何；右栏显示锁定源纹理或对应的源表面投影。",
         note_font,
     )
-    OUTPUT_IMAGE.parent.mkdir(parents=True, exist_ok=True)
-    canvas.save(OUTPUT_IMAGE, optimize=True)
+    output_image.parent.mkdir(parents=True, exist_ok=True)
+    canvas.save(output_image, optimize=True)
 
 
 def _metric(record: dict[str, Any], *keys: str) -> Any:
@@ -153,7 +165,15 @@ def _metric(record: dict[str, Any], *keys: str) -> Any:
     return value
 
 
-def build_markdown(records: list[dict[str, Any]], indexed: dict[tuple[str, str], dict[str, Any]]) -> None:
+def build_markdown(
+    records: list[dict[str, Any]],
+    indexed: dict[tuple[str, str], dict[str, Any]],
+    ratio: str,
+    percent: str,
+    target_faces: int,
+    output_image: Path,
+    output_markdown: Path,
+) -> None:
     hausdorff_values = [
         float(_metric(record, "metrics", "geometry", "normalized_unit_diagonal", "hausdorff_symmetric_sampled"))
         for record in records
@@ -175,7 +195,7 @@ def build_markdown(records: list[dict[str, Any]], indexed: dict[tuple[str, str],
     for (method, display_name), research in zip(METHODS, records, strict=True):
         asset = indexed[(method, "asset")]
         actual_faces = int(research["actual_faces"])
-        deviation = abs(actual_faces - TARGET_FACES) / TARGET_FACES * 100.0
+        deviation = abs(actual_faces - target_faces) / target_faces * 100.0
         hausdorff = float(
             _metric(research, "metrics", "geometry", "normalized_unit_diagonal", "hausdorff_symmetric_sampled")
         )
@@ -209,9 +229,9 @@ def build_markdown(records: list[dict[str, Any]], indexed: dict[tuple[str, str],
             f"| {display_name} | {actual_faces:,} | {deviation:.3f}% | {hausdorff_text} | "
             f"{chamfer_text} | {wall_text} | {topology_text} | {asset['status']} | {rgb_text} |"
         )
-    content = """# Ratio 0.5：七种网格简化方法汇总
+    content = f"""# Ratio {ratio}：七种网格简化方法汇总
 
-![Ratio 0.5 七种方法汇总](assets/ratio-0p5-seven-methods.png)
+![Ratio {ratio} 七种方法汇总](assets/{output_image.name})
 
 ## 关键指标
 
@@ -219,19 +239,34 @@ def build_markdown(records: list[dict[str, Any]], indexed: dict[tuple[str, str],
 |---|---:|---:|---:|---:|---:|---|---|---:|
 """ + "\n".join(rows) + (
         "\n\n指标口径：`H` 为单位包围盒对角线坐标下的双向 sampled Hausdorff；"
-        "`C` 为 mean-squared symmetric Chamfer；几何指标和时间来自 50% 科研轨，"
+        f"`C` 为 mean-squared symmetric Chamfer；几何指标和时间来自 {percent} 科研轨，"
         "RGB L2 来自对应的兼容资产轨。`—` 表示资产轨未通过硬门禁，"
         "因而没有可报告的纹理指标。数值越小越好。\n"
     )
-    OUTPUT_MARKDOWN.write_text(content, encoding="utf-8")
+    output_markdown.write_text(content, encoding="utf-8")
 
 
 def main() -> None:
-    records, indexed = _collect_records()
-    build_figure(records)
-    build_markdown(records, indexed)
-    print(OUTPUT_IMAGE)
-    print(OUTPUT_MARKDOWN)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--ratio", choices=tuple(RATIO_CONFIG), default="0.5")
+    args = parser.parse_args()
+    config = RATIO_CONFIG[args.ratio]
+    slug = str(config["slug"])
+    output_image = ROOT / "docs" / "assets" / f"ratio-{slug}-seven-methods.png"
+    output_markdown = ROOT / "docs" / f"ratio-{slug}-seven-method-summary.md"
+    records, indexed = _collect_records(args.ratio)
+    build_figure(records, args.ratio, str(config["percent"]), output_image)
+    build_markdown(
+        records,
+        indexed,
+        args.ratio,
+        str(config["percent"]),
+        int(config["target_faces"]),
+        output_image,
+        output_markdown,
+    )
+    print(output_image)
+    print(output_markdown)
 
 
 if __name__ == "__main__":
